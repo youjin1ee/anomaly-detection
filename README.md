@@ -103,7 +103,7 @@ detectors:
     model:
       kind: seasonal
       seasonality: [daily, weekly]
-      band_k: 4
+      band_k: 6
 ```
 
 Notes:

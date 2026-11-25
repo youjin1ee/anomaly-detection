@@ -34,10 +34,10 @@ class SeasonalBaseline:
     lookback       how many past periods to look at (default 7 for periods up to a day,
                    4 for longer ones)
     slot_window    neighbour slots on each side of the same slot that are pooled in, which
-                   makes the estimate usable after a few days (default 3)
-    min_points     minimum pooled values needed for a period to be used (default 8)
+                   makes the estimate usable after a few days (default 8)
+    min_points     minimum pooled values needed for a period to be used (default 18)
     band_k         band half width in robust sigmas, and the score is 0.5 at the band edge
-                   (default 4.0)
+                   (default 6.0)
     min_scale_ratio  floor of the spread as a fraction of the expected value, so a perfectly
                    flat history does not make every wiggle an anomaly (default 0.02)
     """
@@ -56,9 +56,9 @@ class SeasonalBaseline:
         interval: float,
         seasonality: list[Any] | None = None,
         lookback: int | None = None,
-        slot_window: int = 3,
-        min_points: int = 8,
-        band_k: float = 4.0,
+        slot_window: int = 8,
+        min_points: int = 18,
+        band_k: float = 6.0,
         min_scale_ratio: float = 0.02,
     ):
         if interval <= 0:

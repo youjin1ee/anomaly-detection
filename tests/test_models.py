@@ -51,8 +51,8 @@ def test_seasonal_returns_none_until_enough_history():
     outs = feed(m, synth(3))
     assert outs[0] is None
     assert outs[DAY - 1] is None  # first day: nothing to compare with
-    assert outs[DAY + DAY // 2] is None  # one day gives only 2*slot_window+1 = 7 points
-    assert outs[2 * DAY + DAY // 2] is not None  # two days are enough for min_points=8
+    assert outs[DAY + DAY // 2] is None  # one day gives only 2*slot_window+1 = 17 points
+    assert outs[2 * DAY + DAY // 2] is not None  # two days are enough for min_points=18
 
 
 def test_seasonal_quiet_on_normal_data_and_flags_a_drop():

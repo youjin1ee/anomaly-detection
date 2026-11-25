@@ -37,7 +37,7 @@ detectors:
     model:
       kind: seasonal
       seasonality: [daily, weekly]
-      band_k: 4
+      band_k: 6
 
   - name: output_tokens
     query: avg(output_tokens_mean)

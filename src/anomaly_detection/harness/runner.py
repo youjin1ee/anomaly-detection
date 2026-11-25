@@ -33,7 +33,7 @@ class ModelSpec:
 
 
 def parse_model(text: str) -> ModelSpec:
-    """`seasonal`, or `NAME=BASE` and `NAME=BASE:key=value,key=value` for variants."""
+    """`seasonal`, or `NAME=BASE` and `NAME=BASE:key=value&key=value` for variants. Values are JSON."""
     name, _, rest = text.partition("=")
     if not rest:
         base, params = name, ""
@@ -43,7 +43,7 @@ def parse_model(text: str) -> ModelSpec:
         raise ValueError(f"unknown base model {base!r}; known: {sorted(BUILTIN_MODELS)}")
     kind, defaults = BUILTIN_MODELS[base]
     merged = dict(defaults)
-    for pair in filter(None, params.split(",")):
+    for pair in filter(None, params.split("&")):
         k, _, v = pair.partition("=")
         merged[k] = json.loads(v)
     return ModelSpec(name, kind, merged)

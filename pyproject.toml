@@ -1,0 +1,46 @@
+[project]
+name = "anomaly-detection"
+version = "0.1.0"
+description = "Generic anomaly detection sidecar for Prometheus-compatible metric stores"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "prometheus-client>=0.20",
+    # rrcf (MIT, pure Python) imports pkg_resources at import time, and setuptools
+    # 81+ no longer ships it. It also does not declare setuptools as a dependency.
+    "rrcf==0.4.4",
+    "setuptools<81",
+]
+
+[project.scripts]
+anomaly-detection = "anomaly_detection.cli:main"
+anomaly-detection-eval = "anomaly_detection.harness.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/anomaly_detection"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -W ignore::UserWarning:rrcf -W ignore::DeprecationWarning:pkg_resources"

@@ -38,7 +38,7 @@ Models:
 
 | kind | what it does | when to use |
 |---|---|---|
-| `seasonal` | median and MAD of the same time of day (and week) in the past, pooled over neighbouring slots | default; cheap, works after two days of history, has a band |
+| `seasonal` | median and MAD of the same time of day (and week) in the past, pooled over neighbouring slots | default; cheap, works after two days of history (defaults tuned on synthetic data), has a band |
 | `rcf` | Random Cut Forest ([rrcf](https://github.com/kLabUM/rrcf)) over shingled, normalised values | shape changes that a band does not describe; heavier, no band |
 | `static` | fixed lower and upper limit | hard limits, and as a comparison baseline |
 
@@ -124,7 +124,7 @@ Notes:
   `datasource` section only, for secrets.
 - `interval` is also the spacing of model samples. Backfill uses the same step, so a long
   backfill at a short interval means many samples (10000 per request, chunked automatically).
-  RCF costs a few milliseconds per sample, so keep its backfill short or its interval longer.
+  RCF costs a few milliseconds per sample and needs `sample_size` (default 1024) samples before it scores, so keep its backfill short or its interval longer.
 
 ## Output metrics
 

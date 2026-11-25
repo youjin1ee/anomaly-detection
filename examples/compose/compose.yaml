@@ -1,0 +1,102 @@
+# Demo stack: a synthetic metric generator, a Prometheus-compatible store with 21 days of
+# seeded history, and the detector reading from it.
+#
+#   docker compose up --build                       # VictoriaMetrics single node
+#   docker compose --profile prometheus up --build  # adds Prometheus and a second detector
+#
+# Inject a silent failure and watch the scores:
+#   curl -X POST 'localhost:9100/fault?kind=request_drop&seconds=900'
+#   curl -s localhost:8080/metrics | grep '^anomaly_score'
+name: anomaly-detection-demo
+
+x-app: &app
+  image: anomaly-detection:local
+  build:
+    context: ../..
+
+services:
+  generator:
+    <<: *app
+    entrypoint: ["python", "-m", "anomaly_detection.harness.demo_exporter"]
+    command: ["--listen", "0.0.0.0:9100"]
+    ports: ["9100:9100"]
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.156.0
+    command:
+      - -retentionPeriod=60d
+      - -storageDataPath=/storage
+      - -promscrape.config=/etc/scrape.yml
+    volumes:
+      - ./scrape-vm.yml:/etc/scrape.yml:ro
+      - vmdata:/storage
+    ports: ["8428:8428"]
+
+  seed-vm:
+    <<: *app
+    entrypoint: ["python", "-m", "anomaly_detection.harness.demo_exporter"]
+    command: ["--seed-victoriametrics", "http://victoriametrics:8428", "--seed-days", "21"]
+    depends_on: [victoriametrics]
+    restart: on-failure
+
+  detector:
+    <<: *app
+    volumes:
+      - ./config-vm.yaml:/etc/anomaly-detection/config.yaml:ro
+    depends_on:
+      seed-vm:
+        condition: service_completed_successfully
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8080/healthz')"]
+      interval: 15s
+
+  # ---- Prometheus variant ----------------------------------------------------------------
+  seed-prometheus:
+    <<: *app
+    profiles: [prometheus]
+    entrypoint: ["python", "-m", "anomaly_detection.harness.demo_exporter"]
+    # Prometheus cannot take blocks newer than its head, so the history ends three hours ago.
+    command: ["--seed-openmetrics", "/seed/history.om", "--seed-days", "21", "--seed-end-offset", "10800"]
+    user: root
+    volumes: [seed:/seed]
+
+  prometheus-init:
+    image: prom/prometheus:v3.15.1
+    profiles: [prometheus]
+    user: root
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - promtool tsdb create-blocks-from openmetrics /seed/history.om /prometheus && chown -R 65534:65534 /prometheus
+    volumes: [seed:/seed, promdata:/prometheus]
+    depends_on:
+      seed-prometheus:
+        condition: service_completed_successfully
+
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    profiles: [prometheus]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=60d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports: ["9090:9090"]
+    depends_on:
+      prometheus-init:
+        condition: service_completed_successfully
+
+  detector-prometheus:
+    <<: *app
+    profiles: [prometheus]
+    volumes:
+      - ./config-prometheus.yaml:/etc/anomaly-detection/config.yaml:ro
+    depends_on: [prometheus]
+    ports: ["8081:8080"]
+
+volumes:
+  vmdata:
+  promdata:
+  seed:

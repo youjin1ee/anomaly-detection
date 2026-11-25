@@ -54,6 +54,18 @@ def _ar_noise(rng: np.random.Generator, n: int, sigma: float, rho: float) -> np.
     return sigma * out
 
 
+def shape(name: str, ts: np.ndarray) -> np.ndarray:
+    """Noise free expected value of a base signal at the given timestamps."""
+    sig = SIGNALS[name]
+    tod = (ts % DAY) / DAY
+    phase = 2 * np.pi * (tod - sig.peak_hour / 24.0)
+    daily = 1 + sig.daily_amp * np.cos(phase) + sig.daily_amp2 * np.cos(2 * phase + 0.8)
+    weekday = ((ts - T0) // DAY) % 7
+    week = np.where(weekday >= 5, sig.weekend, 1.0)
+    trend = 1 + sig.trend_per_week * (ts - T0) / (7 * DAY)
+    return sig.base * daily * week * trend
+
+
 def generate(name: str, ts: np.ndarray, seed: int) -> np.ndarray:
     """Normal behaviour of one signal. `step_time` is derived from `throughput`."""
     if name == "step_time":
@@ -61,14 +73,8 @@ def generate(name: str, ts: np.ndarray, seed: int) -> np.ndarray:
         return derive_step_time(thr, seed)
     sig = SIGNALS[name]
     rng = np.random.default_rng(seed)
-    tod = (ts % DAY) / DAY
-    phase = 2 * np.pi * (tod - sig.peak_hour / 24.0)
-    shape = 1 + sig.daily_amp * np.cos(phase) + sig.daily_amp2 * np.cos(2 * phase + 0.8)
-    weekday = ((ts - T0) // DAY) % 7
-    week = np.where(weekday >= 5, sig.weekend, 1.0)
-    trend = 1 + sig.trend_per_week * (ts - T0) / (7 * DAY)
     noise = _ar_noise(rng, len(ts), sig.noise, sig.ar)
-    values = sig.base * shape * week * trend * (1 + noise)
+    values = shape(name, ts) * (1 + noise)
     if name == "throughput":
         # Checkpoint dips: two samples at -30 percent once an hour. They are normal.
         step = int(ts[1] - ts[0])

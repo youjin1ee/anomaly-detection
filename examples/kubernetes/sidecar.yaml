@@ -1,0 +1,89 @@
+# Detector as a sidecar of a Prometheus-compatible store. Both containers share the pod
+# network, so the detector reads the store on localhost and the store scrapes the detector
+# on localhost:8080. The same container works as a standalone Deployment: point
+# datasource.url at the store's Service instead of localhost.
+#
+# Replace the store image and arguments with whatever you run (Prometheus, VictoriaMetrics
+# single node, vmselect, Thanos Query, Mimir query-frontend, ...).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: anomaly-detection-config
+data:
+  config.yaml: |
+    datasource:
+      url: http://localhost:9090
+      # path_prefix: /select/0/prometheus   # VictoriaMetrics cluster tenant path
+      # headers:
+      #   X-Scope-OrgID: tenant-a           # Mimir or Cortex tenant
+      # auth:
+      #   type: bearer
+      #   token_file: /var/run/secrets/store/token
+    defaults:
+      interval: 60s
+      backfill: 14d
+      max_series_per_detector: 100
+      max_series_total: 500
+    detectors:
+      - name: request_rate_drop
+        query: sum(rate(http_requests_total[5m]))
+        direction: below
+        min_expected: 1
+        model: seasonal
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-store
+  labels: {app: metrics-store}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: metrics-store}
+  template:
+    metadata:
+      labels: {app: metrics-store}
+      annotations:
+        # Prometheus scrape annotations are one option. The store must scrape port 8080 of
+        # this pod with its own scrape config (see the scrape_config below).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+        - name: store
+          image: prom/prometheus:v3.15.1
+          ports: [{name: http, containerPort: 9090}]
+        - name: anomaly-detection
+          image: anomaly-detection:0.1.0
+          args: ["run", "--config", "/etc/anomaly-detection/config.yaml"]
+          ports: [{name: metrics, containerPort: 8080}]
+          volumeMounts:
+            - {name: config, mountPath: /etc/anomaly-detection, readOnly: true}
+          startupProbe:
+            httpGet: {path: /readyz, port: metrics}
+            periodSeconds: 10
+            failureThreshold: 60  # backfill can take a while
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: {path: /readyz, port: metrics}
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+      volumes:
+        - name: config
+          configMap: {name: anomaly-detection-config}
+# The store has to scrape the detector to make anomaly_score queryable by alert rules:
+#
+#   scrape_configs:
+#     - job_name: anomaly-detection
+#       static_configs:
+#         - targets: ["localhost:8080"]

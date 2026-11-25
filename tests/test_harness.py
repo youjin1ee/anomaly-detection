@@ -78,3 +78,14 @@ def test_score_case_runs_for_each_builtin_kind():
         assert isinstance(spec, ModelSpec)
         scores, us = score_case(spec, case, 300)
         assert scores.shape == case.values.shape and us > 0
+
+
+def test_demo_exporter_history_and_faults():
+    from anomaly_detection.harness.demo_exporter import current_values, history
+
+    h = history(1_704_067_200 + 3 * 86400, 1, 60)
+    assert set(h) == {"request_rate", "output_tokens", "throughput", "step_time"}
+    assert len(h["request_rate"]) > 1400
+    normal = current_values(1_704_067_200 + 3 * 86400 + 15 * 3600, set())
+    faulty = current_values(1_704_067_200 + 3 * 86400 + 15 * 3600, {"request_drop"})
+    assert faulty["request_rate"] < 0.1 * normal["request_rate"]

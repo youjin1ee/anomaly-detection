@@ -47,7 +47,7 @@ detectors:
       kind: rcf
       shingle_size: 8
       num_trees: 40
-      sample_size: 256
+      sample_size: 1024
 
   - name: queue_hard_limit
     query: max(queue_depth)

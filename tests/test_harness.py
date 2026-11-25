@@ -73,7 +73,7 @@ def test_alert_before_the_event_is_a_false_alarm():
 
 def test_score_case_runs_for_each_builtin_kind():
     case = build_normal_case("output_tokens", "both", 0, 1, 3, 1, 300)
-    for text in ("fixed", "seasonal", "rcf=rcf:num_trees=5,sample_size=32"):
+    for text in ("fixed", "seasonal", "rcf=rcf:num_trees=5&sample_size=32"):
         spec = parse_model(text)
         assert isinstance(spec, ModelSpec)
         scores, us = score_case(spec, case, 300)

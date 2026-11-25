@@ -34,7 +34,7 @@ class RCFModel:
 
     shingle_size       consecutive samples per point (default 8, AMP default)
     num_trees          trees in the forest (default 40)
-    sample_size        points kept per tree, sliding window (default 256, AMP minimum)
+    sample_size        points kept per tree, sliding window (default 1024, AMP maximum)
     norm_window        samples used for the trailing median and MAD (default 1440)
     reference_window   samples used for `expected` (default 60)
     time_features      add sin/cos of time of day (and week) as two more dimensions, which
@@ -64,7 +64,7 @@ class RCFModel:
         seed: int = 0,
         shingle_size: int = 8,
         num_trees: int = 40,
-        sample_size: int = 256,
+        sample_size: int = 1024,
         norm_window: int = 1440,
         reference_window: int = 60,
         time_features: bool = False,

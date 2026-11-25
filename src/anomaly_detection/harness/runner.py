@@ -33,7 +33,7 @@ class ModelSpec:
 
 
 def parse_model(text: str) -> ModelSpec:
-    """`seasonal`, or `NAME=BASE` and `NAME=BASE:key=value&key=value` for variants. Values are JSON."""
+    """`seasonal`, or `NAME=BASE:key=value&key=value` for variants. Values are JSON."""
     name, _, rest = text.partition("=")
     if not rest:
         base, params = name, ""

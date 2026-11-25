@@ -26,6 +26,11 @@ class DetectorState:
     stale_after: float
     pipelines: dict[LabelKey, SeriesPipeline] = field(default_factory=dict)
     last_seen: dict[LabelKey, float] = field(default_factory=dict)
+    # Series that were created from live data without any replayed history. They get a
+    # backfill later, because the store may not have answered the startup backfill yet
+    # (freshly seeded data is not searchable for a moment) or the series is new.
+    cold: set[LabelKey] = field(default_factory=set)
+    last_history_attempt: float = 0.0
     lock: threading.Lock = field(default_factory=threading.Lock)
     backfill_complete: bool = False
     backfill_samples: int = 0
@@ -116,11 +121,15 @@ class Runner:
 
     # ---- work ------------------------------------------------------------------------
 
-    def _new_pipeline(self, st: DetectorState, key: LabelKey) -> SeriesPipeline | None:
-        if len(st.pipelines) >= st.max_series:
-            return None
-        if self.total_series() >= self._cfg.defaults.max_series_total:
-            return None
+    def _new_pipeline(
+        self, st: DetectorState, key: LabelKey, ignore_limits: bool = False
+    ) -> SeriesPipeline | None:
+        # ignore_limits is for rebuilding a model of a series that already holds a slot.
+        if not ignore_limits:
+            if len(st.pipelines) >= st.max_series:
+                return None
+            if self.total_series() >= self._cfg.defaults.max_series_total:
+                return None
         d = st.cfg
         seed = zlib.crc32(f"{d.name}|{key}".encode())
         model = create_model(d.model.kind, dict(d.model.params), st.interval, seed)
@@ -146,6 +155,7 @@ class Runner:
         with st.lock:
             st.pipelines.clear()
             st.last_seen.clear()
+            st.cold.clear()
             for key in sorted(data):
                 points = data[key]
                 if not points or end - points[-1][0] > st.stale_after:
@@ -162,6 +172,7 @@ class Runner:
             st.series_dropped = dropped
             st.backfill_samples = fed
             st.backfill_complete = True
+            st.last_history_attempt = now
         log.info(
             "backfill of %s done: %d series, %d samples, %d dropped by series limit",
             st.cfg.name,
@@ -196,13 +207,43 @@ class Runner:
                         dropped += 1
                         continue
                     st.pipelines[s.labels] = pipe
+                    st.cold.add(s.labels)
                 pipe.update(ts, s.value)
                 st.last_seen[s.labels] = ts
             for key in [k for k, seen in st.last_seen.items() if ts - seen > st.stale_after]:
                 del st.pipelines[key]
                 del st.last_seen[key]
+                st.cold.discard(key)
             st.series_dropped = dropped
             st.last_evaluation_ts = ts
+        self._backfill_cold(st, ts, {s.labels: s.value for s in samples})
+
+    def _backfill_cold(self, st: DetectorState, ts: float, live: dict[LabelKey, float]) -> None:
+        """Give series that started without history a replay of their past, at most once per
+        two intervals. The model is rebuilt from the replay, so samples stay in time order."""
+        if not st.cold or ts - st.last_history_attempt < 2 * st.interval:
+            return
+        st.last_history_attempt = ts
+        end = math.floor(ts / st.interval) * st.interval
+        start = math.floor((ts - st.backfill) / st.interval) * st.interval
+        try:
+            data = self._client.query_range(st.cfg.query, start, end, st.interval)
+        except QueryError as exc:
+            log.warning("history for new series of %s failed, will retry: %s", st.cfg.name, exc)
+            return
+        with st.lock:
+            for key in list(st.cold):
+                points = data.get(key)
+                if points:
+                    pipe = self._new_pipeline(st, key, ignore_limits=True)
+                    if pipe is not None:
+                        for t, v in points:
+                            pipe.update(t, v)
+                        if key in live:
+                            pipe.update(ts, live[key])  # ignored if the replay already has it
+                        st.pipelines[key] = pipe
+                st.cold.discard(key)
+        log.info("late backfill of %s done for new series", st.cfg.name)
 
     def _finish(self, st: DetectorState, ts: float, started: float) -> None:
         st.evaluations += 1

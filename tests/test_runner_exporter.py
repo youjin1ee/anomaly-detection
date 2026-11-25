@@ -159,3 +159,28 @@ def test_restart_recovers_from_backfill_only(fake_prom):
         (pipe,) = runner.states[0].pipelines.values()
         results.append(pipe.last_result)
     assert results[0] is not None and results[0] == results[1]
+
+
+def test_empty_startup_backfill_is_repaired_by_late_backfill(fake_prom):
+    """The store may not serve history yet when the detector starts (just seeded data)."""
+    end, vals = history()
+    state = {"ready": False}
+
+    def handler(path, q):
+        if path.endswith("/query_range"):
+            return 200, matrix(({"model": "a"}, vals)) if state["ready"] else matrix()
+        return 200, vector(({"model": "a"}, float(q["time"]), "100"))
+
+    fake_prom.handler = handler
+    _cfg, runner = build(fake_prom)
+    st = runner.states[0]
+    runner.backfill(st, end + 1)
+    assert st.backfill_complete and not st.pipelines
+
+    runner.evaluate(st, end + STEP)  # live sample creates a cold series
+    (pipe,) = st.pipelines.values()
+    assert pipe.last_result is None and st.cold
+    state["ready"] = True
+    runner.evaluate(st, end + 3 * STEP)  # two intervals later the history is replayed
+    (pipe,) = st.pipelines.values()
+    assert pipe.last_result is not None and not st.cold

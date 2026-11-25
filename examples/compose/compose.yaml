@@ -9,14 +9,17 @@
 #   curl -s localhost:8080/metrics | grep '^anomaly_score'
 name: anomaly-detection-demo
 
+# One image for the detector and the demo tools. Only `generator` builds it.
 x-app: &app
   image: anomaly-detection:local
-  build:
-    context: ../..
+  pull_policy: never
 
 services:
   generator:
     <<: *app
+    pull_policy: build
+    build:
+      context: ../..
     entrypoint: ["python", "-m", "anomaly_detection.harness.demo_exporter"]
     command: ["--listen", "0.0.0.0:9100"]
     ports: ["9100:9100"]

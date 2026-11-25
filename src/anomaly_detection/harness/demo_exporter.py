@@ -29,6 +29,9 @@ METRICS = {
     "throughput": ("demo_training_throughput", "Training tokens per second"),
     "step_time": ("demo_step_time_seconds", "Seconds per training step"),
 }
+# Same labels the store attaches when it scrapes the live exporter, so seeded history and live
+# samples are one series instead of two that a sum() would add up.
+SCRAPE_LABELS = '{job="demo",instance="generator:9100"}'
 FAULTS = ("request_drop", "token_length_drop", "throughput_drop")
 
 
@@ -47,7 +50,7 @@ def seed_victoriametrics(url: str, end: float, days: float) -> None:
     lines = []
     for sig, points in history(end, days).items():
         name = METRICS[sig][0]
-        lines += [f"{name} {v} {int(t * 1000)}" for t, v in points]
+        lines += [f"{name}{SCRAPE_LABELS} {v} {int(t * 1000)}" for t, v in points]
     resp = httpx.post(
         f"{url.rstrip('/')}/api/v1/import/prometheus", content="\n".join(lines) + "\n"
     )
@@ -61,7 +64,7 @@ def seed_openmetrics(path: str, end: float, days: float) -> None:
         for sig, points in data.items():
             name = METRICS[sig][0]
             f.write(f"# TYPE {name} gauge\n")
-            f.writelines(f"{name} {v} {t:.0f}\n" for t, v in points)
+            f.writelines(f"{name}{SCRAPE_LABELS} {v} {t:.0f}\n" for t, v in points)
         f.write("# EOF\n")
     print(f"wrote {path}", file=sys.stderr)
 

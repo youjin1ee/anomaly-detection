@@ -19,9 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--models",
         default="fixed,seasonal,rcf",
-        help="comma separated; NAME=BASE:key=value,... makes a parameter variant. "
-        "Bases: fixed, seasonal, rcf, rcf-time. Use ';' between variants whose "
-        "parameters contain commas.",
+        help="comma separated. Bases: fixed, seasonal, rcf, rcf-time. "
+        "NAME=BASE:key=value&key=value makes a parameter variant, for example "
+        '"s6=seasonal:band_k=6" (values are JSON).',
     )
     p.add_argument("--variants", type=int, default=20, help="variants per scenario")
     p.add_argument("--seed-base", type=int, default=1000)
@@ -38,8 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", type=Path, help="write per-case results here")
     args = p.parse_args(argv)
 
-    sep = ";" if ";" in args.models else ","
-    specs = [parse_model(m) for m in args.models.split(sep) if m]
+    specs = [parse_model(m) for m in args.models.split(",") if m]
     rule = AlertRule(threshold=args.threshold, for_points=args.for_points)
     t0 = time.time()
     rows = run_all(

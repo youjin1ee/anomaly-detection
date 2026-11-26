@@ -14,9 +14,9 @@ import os
 from pathlib import Path
 
 import numpy as np
-from anomaly_detection.lab import replay as lab
 
 from anomaly_detection.harness.metrics import AlertRule
+from anomaly_detection.lab import replay as lab
 from anomaly_detection.models.tspulse import TSPulseModel
 
 

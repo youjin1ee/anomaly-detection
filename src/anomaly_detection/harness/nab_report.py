@@ -9,7 +9,7 @@ import numpy as np
 
 from .metrics import AlertRule, Summary
 from .nab_data import CATEGORIES, NabSeries
-from .nab_runner import event_summaries
+from .nab_runner import event_summaries, hold_for
 from .nab_score import (
     PROFILES,
     FileEvents,
@@ -195,3 +195,37 @@ def render(
                 out.append(f"| {m} | {us_per_record[m]:.0f} |")
         out.append("")
     return "\n".join(out)
+
+
+def render_seeds(
+    corpus: Sequence[NabSeries],
+    runs: Sequence[dict[str, dict[str, np.ndarray]]],
+    models: Sequence[str],
+    for_points: int = 3,
+) -> str:
+    """NAB scores of randomised models over several seeds: per seed, mean and range.
+    `runs` holds one `model -> path -> scores` mapping per seed."""
+    names = [x for m in models for x in (m, f"{m}+for{for_points}")]
+    out = [
+        "### NAB score over seeds, one threshold per model and profile",
+        "",
+        "| model | profile | "
+        + " | ".join(f"seed {i}" for i in range(len(runs)))
+        + " | mean | min | max |",
+        "|---|---|" + "---|" * (len(runs) + 3),
+    ]
+    per: dict[str, list[ModelNab]] = {n: [] for n in names}
+    for run in runs:
+        for m in models:
+            per[m].append(nab_numbers(corpus, run[m]))
+            held = {p: hold_for(s, for_points) for p, s in run[m].items()}
+            per[f"{m}+for{for_points}"].append(nab_numbers(corpus, held))
+    for n in names:
+        for pname in PROFILE_COLUMNS:
+            vals = [r.optimized[pname][1] for r in per[n]]
+            cells = " | ".join(_f(v) for v in vals)
+            out.append(
+                f"| {n} | {pname} | {cells} | {_f(float(np.mean(vals)))} "
+                f"| {_f(min(vals))} | {_f(max(vals))} |"
+            )
+    return "\n".join(out) + "\n"

@@ -13,7 +13,7 @@ import numpy as np
 
 from .metrics import AlertRule
 from .nab_data import NAB_ARCHIVE_URL, fetch_nab, load_corpus
-from .nab_report import render
+from .nab_report import render, render_seeds
 from .nab_runner import NAB_MODELS, hold_for, run_models
 from .nab_verify import render as render_verify
 from .nab_verify import verify
@@ -75,6 +75,24 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_seeds(args: argparse.Namespace) -> int:
+    corpus = load_corpus(args.nab_dir)
+    names = [m for m in args.models.split(",") if m]
+    runs = []
+    for d in args.scores_dirs:
+        run = {}
+        for m in names:
+            with np.load(_scores_file(d, m)) as z:
+                run[m] = {s.path: z[s.path.replace("/", "__")] for s in corpus}
+        runs.append(run)
+    text = render_seeds(corpus, runs, names, args.for_points)
+    print(text)
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(text)
+    return 0
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     corpus = load_corpus(args.nab_dir)
     checks = verify(corpus, args.nab_dir, [d for d in args.detectors.split(",") if d])
@@ -112,6 +130,14 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--for-points", type=int, default=3)
     q.add_argument("--out", type=Path)
     q.set_defaults(func=cmd_report)
+
+    s = sub.add_parser("seeds", help="NAB scores of randomised models over several seeds")
+    s.add_argument("--nab-dir", type=Path, required=True)
+    s.add_argument("--models", default="rcf,rcf-time")
+    s.add_argument("--scores-dirs", type=Path, nargs="+", required=True, help="one per seed")
+    s.add_argument("--for-points", type=int, default=3)
+    s.add_argument("--out", type=Path)
+    s.set_defaults(func=cmd_seeds)
 
     v = sub.add_parser("verify", help="compare the scorer with the official NAB results")
     v.add_argument("--nab-dir", type=Path, required=True, help="a NAB checkout (with results/)")

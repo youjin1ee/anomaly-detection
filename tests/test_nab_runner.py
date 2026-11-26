@@ -89,3 +89,16 @@ def test_hold_for_is_the_for_clause():
     x = np.array([0.9, 0.9, 0.2, 0.9, 0.9, 0.9, np.nan, 0.9, 0.9])
     got = hold_for(x, 3)
     assert got.tolist() == [0.0, 0.0, 0.2, 0.2, 0.2, 0.9, 0.0, 0.0, 0.0]
+
+
+def test_report_renders_models_variants_and_seeds():
+    from anomaly_detection.harness.nab_report import render, render_seeds
+
+    s = _daily()
+    scores = {"seasonal": {s.path: score_series("seasonal", s)[0]}}
+    # the +for3 entry is what the report command derives from the kept scores
+    scores["seasonal+for3"] = {s.path: hold_for(scores["seasonal"][s.path], 3)}
+    text = render([s], scores, ["seasonal"], AlertRule(), None, 3)
+    assert "seasonal+for3" in text and "Perfect" in text and "artificialWithAnomaly" in text
+    seeds = render_seeds([s], [scores, scores], ["seasonal"])
+    assert "seed 1" in seeds and "seasonal+for3" in seeds

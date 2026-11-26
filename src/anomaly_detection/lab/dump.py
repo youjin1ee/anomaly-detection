@@ -67,6 +67,8 @@ def dump_raw(base: str, out: Path, start: float, end: float) -> int:
             s = json.loads(line)
             lab = labels_text(s["metric"])
             for t_ms, v in zip(s["timestamps"], s["values"], strict=True):
+                if v is None:
+                    continue  # NaN is exported as null
                 w.writerow([t_ms / 1000.0, lab, v])
                 n += 1
     return n

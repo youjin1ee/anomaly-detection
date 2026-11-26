@@ -258,6 +258,8 @@ def test_replay_reads_live_sidecar_scores_from_the_raw_dump(tmp_path):
             lab = '__name__="anomaly_score",detector="request_rate",job="detector"'
             w.writerow([t + 0.3, lab, 0.9 if hot else 0.1])
             w.writerow([t, '__name__="vllm:other",job="x"', 1])
+    with raw.open("a", newline="") as f:
+        csv.writer(f).writerow([ts[-1], '__name__="anomaly_score",detector="request_rate"', ""])
     live = replay.load_live_scores(raw, 5)
     assert set(live) == {"request_rate"}
     rows = replay.evaluate(signals, meta, events, [], 5, replay.AlertRule(), None, live)

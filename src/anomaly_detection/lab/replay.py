@@ -69,6 +69,8 @@ def load_live_scores(path: Path, step: int) -> dict[str, dict[int, float]]:
             if not row["labels"].startswith('__name__="anomaly_score"'):
                 continue
             lab = dict(re.findall(r'(\w+)="([^"]*)"', row["labels"]))
+            if row["value"] in ("", "NaN"):
+                continue  # the store exports NaN as null
             out[lab["detector"]][round(float(row["timestamp"]) / step)] = float(row["value"])
     return out
 

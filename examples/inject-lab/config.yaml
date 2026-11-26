@@ -1,0 +1,30 @@
+# Detector for the injection lab. One compressed day is 1440 seconds (24 minutes), so the
+# daily period is given in seconds and the interval is 5 seconds (288 samples per day).
+# The PromQL is the same as in anomaly_detection.lab.signals.
+datasource:
+  url: http://127.0.0.1:8428
+
+defaults:
+  interval: 5s
+  backfill: 1h
+
+detectors:
+  - name: request_rate
+    query: sum(rate(vllm:request_success_total[1m]))
+    direction: below
+    model: {kind: seasonal, seasonality: [1440]}
+
+  - name: output_tokens
+    query: sum(rate(vllm:generation_tokens_total[1m])) / sum(rate(vllm:request_success_total[1m]))
+    direction: below
+    model: {kind: seasonal, seasonality: [1440]}
+
+  - name: decode_speed
+    query: sum(rate(vllm:inter_token_latency_seconds_count[1m])) / sum(rate(vllm:inter_token_latency_seconds_sum[1m]))
+    direction: below
+    model: {kind: seasonal, seasonality: [1440]}
+
+  - name: client_latency
+    query: sum(rate(lab_request_duration_seconds_sum[1m])) / sum(rate(lab_request_duration_seconds_count[1m]))
+    direction: above
+    model: {kind: seasonal, seasonality: [1440]}

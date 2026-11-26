@@ -127,6 +127,7 @@ results are never used, and nothing is tuned per file or per category.
 | `awsrcf-nab` | not derived from the file: the fixed setting of the AWS entry in the NAB scoreboard (100 trees, sample 256, shingle 1, decay 1e-5, raw score divided by 8). Needs the Java bridge, see `docs/design.md` |
 | `awsrcf`, `awsrcf-trcf`, `awsrcf-grade` | `sample_size` and `reference_window` as in `rcf`, everything else default of `models/awsrcf.py` (shingle 8, 50 trees, mode `caster`, or `trcf` without band). `awsrcf-grade` uses the anomaly grade of the library as score instead of the threshold ratio |
 | `toto-4m`, `toto-22m` | no per-file rule: context 512 samples, first score after 128, score mapping at its default. The shortest file has a probationary period of 169 records, so every file is scored from the end of it |
+| `tspulse` | no per-file parameter. 512 sample context, 32 sample scoring window, three heads, defaults of the model. The first score appears at record 563 of each file, whatever the probationary length is |
 | `fixed` | lower and upper limit half the range of the probationary period below its minimum and above its maximum. The synthetic comparison (half the minimum, 1.5 times the maximum) breaks on zero and negative values, which NAB has. Score is 1 outside the limits and 0 inside |
 
 The timestamps are read as UTC. A record whose timestamp is not later than the previous one

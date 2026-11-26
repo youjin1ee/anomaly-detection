@@ -29,6 +29,11 @@ toto = [
     "toto-2>=2.0.0",
     "torch>=2.4",
 ]
+# IBM Granite TSPulse (Apache-2.0). granite-tsfm brings transformers, torch, pandas and
+# scikit-learn, so it stays out of the core dependencies. CPU-only torch is enough.
+tspulse = [
+    "granite-tsfm==0.3.12",
+]
 
 [dependency-groups]
 dev = [

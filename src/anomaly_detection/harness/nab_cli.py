@@ -15,6 +15,7 @@ from .metrics import AlertRule
 from .nab_data import NAB_ARCHIVE_URL, fetch_nab, load_corpus
 from .nab_report import render, render_seeds
 from .nab_runner import NAB_MODELS, hold_for, run_models
+from .nab_toto import TOTO_SIZES, batch_series, checkpoint_dir, toto_name
 from .nab_verify import render as render_verify
 from .nab_verify import verify
 
@@ -48,6 +49,44 @@ def cmd_run(args: argparse.Namespace) -> int:
             json.dumps({"seed": args.seed, "us_per_record": float(us)})
         )
     print(f"scored {len(corpus)} series with {', '.join(names)} in {time.time() - t0:.0f}s")
+    return 0
+
+
+def cmd_run_toto(args: argparse.Namespace) -> int:
+    """Toto 2.0 on every file, many steps per forward pass. Scores go to the same files `run`
+    writes (`toto-<size>.npz`), so `report --models seasonal,rcf,toto-4m` reads them. One file
+    per step is kept in `<scores-dir>/toto-<size>.parts`, and a rerun skips finished files."""
+    from ..models.toto import get_engine
+
+    corpus = load_corpus(args.nab_dir)
+    if args.limit_files:
+        corpus = corpus[: args.limit_files]
+    args.scores_dir.mkdir(parents=True, exist_ok=True)
+    for size in [x for x in args.sizes.split(",") if x]:
+        if size not in TOTO_SIZES:
+            raise SystemExit(f"unknown size {size!r}; known: {', '.join(TOTO_SIZES)}")
+        name = toto_name(size)
+        engine = get_engine(checkpoint_dir(args.toto_dir, size), args.threads)
+        parts = args.scores_dir / f"{name}.parts"
+        parts.mkdir(exist_ok=True)
+        t0 = time.time()
+        for k, s in enumerate(corpus):
+            f = parts / (s.path.replace("/", "__") + ".npz")
+            if f.exists():
+                continue
+            scores, us = batch_series(engine, s, args.batch_size)
+            np.savez(f, scores=scores, us=us)
+            print(f"{name} {k + 1}/{len(corpus)} {s.path} {us:.0f} us/record", flush=True)
+        scores_by_path, us_all = {}, []
+        for s in corpus:
+            with np.load(parts / (s.path.replace("/", "__") + ".npz")) as z:
+                scores_by_path[s.path.replace("/", "__")] = z["scores"]
+                us_all.append(float(z["us"]))
+        np.savez_compressed(_scores_file(args.scores_dir, name), **scores_by_path)
+        (args.scores_dir / f"{name}.meta.json").write_text(
+            json.dumps({"us_per_record": float(np.mean(us_all)), "threads": args.threads})
+        )
+        print(f"{name}: {len(corpus)} series in {time.time() - t0:.0f}s", flush=True)
     return 0
 
 
@@ -121,6 +160,16 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--seed", type=int, default=0)
     r.add_argument("--mem-limit-gb", type=float, default=4.0, help="address space per worker")
     r.set_defaults(func=cmd_run)
+
+    t = sub.add_parser("run-toto", help="score every file with Toto 2.0 (needs the toto extra)")
+    t.add_argument("--nab-dir", type=Path, required=True)
+    t.add_argument("--toto-dir", type=Path, required=True, help="has one directory per size")
+    t.add_argument("--sizes", default=",".join(TOTO_SIZES))
+    t.add_argument("--scores-dir", type=Path, required=True)
+    t.add_argument("--batch-size", type=int, default=256)
+    t.add_argument("--threads", type=int, default=4)
+    t.add_argument("--limit-files", type=int, default=0, help="first N files, for a smoke run")
+    t.set_defaults(func=cmd_run_toto)
 
     q = sub.add_parser("report", help="NAB scores and event metrics from kept scores")
     q.add_argument("--nab-dir", type=Path, required=True)

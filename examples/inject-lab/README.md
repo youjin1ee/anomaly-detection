@@ -51,7 +51,7 @@ To match a detector to the compressed day:
 - Sidecar: `seasonality: [1440]` (seconds, not `daily`) and `interval: 5s`, which is 288
   samples per day (`config.yaml`). Keep `slot_window` times two plus two below the samples per
   day, and keep `backfill` shorter than the history you have.
-- Harness: `anomaly-detection-replay` stretches lab time by `86400 / day_seconds` before the
+- Harness: `python -m anomaly_detection.lab.replay` stretches lab time by `86400 / day_seconds` before the
   models see it, so every model runs with its normal daily period and default parameters.
   `anomaly-detection-eval` is for synthetic series and needs no change.
 - If you change `DAY_SECONDS`, change `seasonality` in `config.yaml` to the same number.
@@ -79,7 +79,7 @@ metric), `signals.csv` and `raw.csv` (`timestamp,labels,value`), `logs/`.
 Replay:
 
 ```sh
-uv run anomaly-detection-replay --signals $OUT/signals.csv --labels $OUT/labels.json \
+uv run python -m anomaly_detection.lab.replay --signals $OUT/signals.csv --labels $OUT/labels.json \
   --models fixed,seasonal,rcf,rcf-time --out report.md
 ```
 

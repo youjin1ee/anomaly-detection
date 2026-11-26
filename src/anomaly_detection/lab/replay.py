@@ -275,7 +275,7 @@ def render(rows: list[Row], model_order: list[str], day_seconds: float) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="anomaly-detection-replay", description=__doc__)
+    p = argparse.ArgumentParser(prog="python -m anomaly_detection.lab.replay", description=__doc__)
     p.add_argument("--signals", type=Path, required=True, help="signals.csv from the dump")
     p.add_argument("--labels", type=Path, required=True, help="labels.json from the injector")
     p.add_argument("--models", default="fixed,seasonal,rcf,rcf-time")

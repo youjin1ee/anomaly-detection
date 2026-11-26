@@ -40,6 +40,13 @@ class SeasonalBaseline:
                    (default 6.0)
     min_scale_ratio  floor of the spread as a fraction of the expected value, so a perfectly
                    flat history does not make every wiggle an anomaly (default 0.02)
+    idle_scale_ratio  for a series that is idle at this time of day (see idle_level) and bursty
+                   at other times: floor of the spread as a fraction of the series' typical
+                   peak, the 99th percentile of the stored history. A burst up to the size
+                   it has had before is then not an anomaly; only a burst clearly larger is.
+                   0 turns it off (default 0, the behaviour before this option existed)
+    idle_level     the expected value counts as idle when it is at most this fraction of the
+                   typical peak (default 0.05)
     """
 
     _ALLOWED: ClassVar[set[str]] = {
@@ -49,6 +56,8 @@ class SeasonalBaseline:
         "min_points",
         "band_k",
         "min_scale_ratio",
+        "idle_scale_ratio",
+        "idle_level",
     }
 
     def __init__(
@@ -60,6 +69,8 @@ class SeasonalBaseline:
         min_points: int = 18,
         band_k: float = 6.0,
         min_scale_ratio: float = 0.02,
+        idle_scale_ratio: float = 0.0,
+        idle_level: float = 0.05,
     ):
         if interval <= 0:
             raise ValueError("interval must be positive")
@@ -80,6 +91,8 @@ class SeasonalBaseline:
         self._min_points = min_points
         self._k = band_k
         self._min_ratio = min_scale_ratio
+        self._idle_ratio = idle_scale_ratio
+        self._idle_level = idle_level
         cap = max(p * look for p, look in self._periods) + slot_window + 2
         self._cap = cap
         self._values = np.full(cap, np.nan)
@@ -112,6 +125,10 @@ class SeasonalBaseline:
         med = float(np.median(ref))
         mad = float(np.median(np.abs(ref - med)))
         scale = max(_MAD_TO_SIGMA * mad, self._min_ratio * abs(med), 1e-12)
+        if self._idle_ratio > 0:
+            peak = float(np.quantile(self._values[self._slots >= 0], 0.99))
+            if abs(med) <= self._idle_level * peak:
+                scale = max(scale, self._idle_ratio * peak)
         z = abs(value - med) / scale
         # Logistic around the band edge: 0.5 at k sigmas, about 0.98 at 2k.
         score = logistic((z - self._k) / (self._k / 4.0))

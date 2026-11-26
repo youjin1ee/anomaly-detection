@@ -131,3 +131,42 @@ def test_rcf_handles_constant_series():
     m = create_model("rcf", {"num_trees": 10, "sample_size": 32}, STEP)
     outs = feed(m, np.full(400, 5.0))
     assert all(math.isfinite(o.score) for o in outs if o)
+
+
+def _bursty_idle_history(days=3):
+    """Idle series with one burst of 50 per day, at a different time each day."""
+    values = np.zeros(days * DAY)
+    for d, offset in enumerate((36, 108, 216)[:days]):
+        values[d * DAY + offset : d * DAY + offset + 6] = 50.0
+    return values
+
+
+def _score_burst(params, burst_value):
+    m = create_model("seasonal", {"seasonality": ["daily"], **params}, STEP)
+    history = _bursty_idle_history()
+    feed(m, history)
+    # day four, 12:00: idle at this time of day in every earlier day
+    t = len(history) + DAY // 2
+    out = None
+    for i in range(len(history), t + 1):
+        out = m.update(i * STEP, burst_value if i == t else 0.0)
+    return out
+
+
+def test_seasonal_idle_scale_ratio_accepts_a_burst_of_known_size():
+    assert _score_burst({}, 50.0).score > 0.9  # default: any burst from idle is an anomaly
+    kept = _score_burst({"idle_scale_ratio": 0.2}, 50.0)
+    assert kept.score < 0.5  # a burst as large as earlier ones is not
+    assert _score_burst({"idle_scale_ratio": 0.2}, 150.0).score > 0.5  # a much larger one is
+
+
+def test_seasonal_idle_scale_ratio_does_not_touch_busy_slots():
+    def collapse(params):
+        m = create_model("seasonal", {"seasonality": ["daily"], **params}, STEP)
+        values = 100 + np.random.default_rng(0).normal(0, 1, 3 * DAY)
+        feed(m, values)
+        return m.update(3 * DAY * STEP, 0.0)
+
+    assert collapse({"idle_scale_ratio": 0.2}).score > 0.99
+    assert collapse({"idle_scale_ratio": 0.2}).score == collapse({}).score
+

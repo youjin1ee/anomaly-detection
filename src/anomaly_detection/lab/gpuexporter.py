@@ -1,5 +1,6 @@
 """Minimal GPU exporter based on `nvidia-smi --query-gpu`, for machines where DCGM exporter
-does not run (for example some ARM64 systems). Fields that report N/A are left out."""
+does not run (for example some ARM64 systems). Fields that report N/A are left out. Also
+exports the host load average (`host_load1`, `host_load5`)."""
 
 from __future__ import annotations
 
@@ -31,6 +32,16 @@ def parse(csv_text: str) -> list[str]:
     return lines
 
 
+def load_average(path: str = "/proc/loadavg") -> list[str]:
+    """Host load, because other jobs on a shared machine are a source of noise."""
+    try:
+        with open(path) as f:
+            one, five, _ = f.read().split()[:3]
+    except (OSError, ValueError):
+        return []
+    return [f"host_load1 {float(one)}", f"host_load5 {float(five)}"]
+
+
 def collect() -> str:
     out = subprocess.run(
         ["nvidia-smi", f"--query-gpu={','.join(FIELDS)}", "--format=csv,noheader,nounits"],
@@ -39,7 +50,7 @@ def collect() -> str:
         timeout=10,
         check=True,
     ).stdout
-    return "\n".join(parse(out)) + "\n"
+    return "\n".join([*parse(out), *load_average()]) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:

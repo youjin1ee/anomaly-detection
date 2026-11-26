@@ -35,6 +35,11 @@ start() {  # name, command...
   echo $! > "$OUT/pids/$name"
 }
 
+if docker volume inspect inject-lab_vmdata > /dev/null 2>&1; then
+  echo "volume inject-lab_vmdata exists: old samples would mix into this run." >&2
+  echo "remove it with: docker compose -f compose.yaml down -v" >&2
+  exit 1
+fi
 docker compose -f compose.yaml up -d --build
 ENGINE_BIN="$ENGINE_BIN" start engine ./start-engine.sh
 until curl -sf http://127.0.0.1:8000/v1/models > /dev/null; do sleep 5; done

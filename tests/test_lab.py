@@ -170,6 +170,13 @@ def test_gpu_exporter_skips_unsupported_fields():
     assert not any(line.startswith("gpu_memory_used_bytes") for line in lines)
 
 
+def test_load_average_reads_the_first_two_fields(tmp_path):
+    p = tmp_path / "loadavg"
+    p.write_text("1.50 2.25 3.00 1/200 123\n")
+    assert gpuexporter.load_average(str(p)) == ["host_load1 1.5", "host_load5 2.25"]
+    assert gpuexporter.load_average(str(tmp_path / "missing")) == []
+
+
 def _lab_signals(tmp_path, drop: bool):
     """Four compressed days of a daily request rate, then 40 minutes with one drop."""
     step, day = 5, 1440

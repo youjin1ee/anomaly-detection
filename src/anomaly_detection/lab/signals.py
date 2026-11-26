@@ -51,4 +51,4 @@ BY_SCENARIO = {s.scenario: s for s in SIGNALS}
 BY_NAME = {s.name: s for s in SIGNALS}
 
 # Metric families kept in the raw dump.
-RAW_MATCH = '{__name__=~"vllm:.*|lab_.*|gpu_.*|anomaly_.*"}'
+RAW_MATCH = '{__name__=~"vllm:.*|lab_.*|gpu_.*|host_.*|anomaly_.*"}'

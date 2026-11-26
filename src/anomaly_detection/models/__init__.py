@@ -7,6 +7,7 @@ from . import (  # noqa: F401  (registration side effects)
     rcf,
     seasonal,
     static,
+    subpca,
     toto,
     tspulse,
 )

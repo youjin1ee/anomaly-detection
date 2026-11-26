@@ -26,7 +26,7 @@ from .metrics import AlertRule, CaseResult, Summary, alerts, summarize
 from .nab_data import NabSeries
 from .nab_score import probation_length
 
-NAB_MODELS = ("fixed", "seasonal", "rcf", "rcf-time")
+NAB_MODELS = ("fixed", "seasonal", "rcf", "rcf-time", "subpca")
 # Models that need the optional Java bridge (see models/awsrcf.py). Not in the default run.
 NAB_AWSRCF_MODELS = ("awsrcf-nab", "awsrcf-trcf", "awsrcf", "awsrcf-grade")
 TSPULSE_MODELS = ("tspulse", "tspulse-time", "tspulse-fft", "tspulse-pred")
@@ -52,6 +52,9 @@ def model_params(name: str, interval: float, n_records: int) -> dict[str, Any]:
         # kept for other resolutions, but never less than one slot on each side.
         w = int(max(1, min(8, round(POOL_SECONDS / interval))))
         return {"slot_window": w, "min_points": min(18, 2 * (2 * w + 1))}
+    if name == "subpca":
+        # Window and components are defaults of the model, not derived from the file.
+        return {}
     if name == "tspulse":
         # Nothing depends on the file: the model has a fixed 512 point context, scores from
         # its own history and has no per-file parameter.

@@ -228,6 +228,11 @@ uv run anomaly-detection-replay dumps/ --models fixed,seasonal,rcf --warmup-days
     --workers 4 --cache-dir .replay-cache --json alerts.json
 ```
 
+For data with real noise, [`examples/inject-lab`](examples/inject-lab) runs a serving engine
+under a compressed-day load, injects the same kind of silent failures with ground truth
+labels, and replays the dump through the same models (`python -m anomaly_detection.lab.replay`).
+Results of the first run: [docs/results/m2-inject-lab.md](docs/results/m2-inject-lab.md).
+
 ## Limitations
 
 - Models learn from what they see. A failure that lasts long enough becomes the new normal;

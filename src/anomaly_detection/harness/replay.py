@@ -158,6 +158,9 @@ def run_model(spec: ModelSpec, series: RecordedSeries, step: int, warmup_end: in
             break
         if res is not None:
             score[i], expected[i] = res.score, res.expected
+    close = getattr(pipe._model, "close", None)
+    if close is not None:
+        close()  # a model that lives outside the process (awsrcf) frees its series
     return RawOutput(score, expected, error)
 
 

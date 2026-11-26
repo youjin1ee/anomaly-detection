@@ -22,6 +22,21 @@ BUILTIN_MODELS: dict[str, tuple[str, dict[str, Any]]] = {
     "seasonal": ("seasonal", {}),
     "rcf": ("rcf", {}),
     "rcf-time": ("rcf", {"time_features": True}),
+    # AWS Random Cut Forest through the Java bridge (needs ANOMALY_AWSRCF_HOME, see
+    # models/awsrcf.py). awsrcf-nab is the setting of the AWS entry in the NAB scoreboard.
+    "awsrcf": ("awsrcf", {"mode": "caster"}),
+    "awsrcf-trcf": ("awsrcf", {"mode": "trcf"}),
+    "awsrcf-nab": (
+        "awsrcf",
+        {
+            "mode": "rcf",
+            "shingle_size": 1,
+            "num_trees": 100,
+            "sample_size": 256,
+            "time_decay": 1e-5,
+            "score_div": 8.0,
+        },
+    ),
 }
 
 

@@ -18,7 +18,8 @@
 - 연동은 Java 자식 프로세스와 표준 입출력 줄 프로토콜로 결정. JPype와 1스텝 지연 차이는 p50 기준 0.04ms
 - 운영 비용(공유 장비, 코어 2개): 시계열 500개 한 라운드 0.40에서 0.60초, 힙 사용 446에서 575MB(전체 GC 뒤). 1분 주기에 들어옴. rrcf는 같은 조건 추정값이 6.6초와 5에서 6GB
 - 기본 점수 환산(임계값에서 0.5)은 알림용으로 너무 민감함. 점수 0.5 이상 3연속 규칙에서 오탐이 1217건(시계열당 하루 0.60건)이고 고정 임계값 0.5의 NAB 점수는 -548.7
-- 장애 주입 데이터는 수집 중이라 평가하지 못함
+- 장애 주입 데이터(1차 20건): 탐지율 awsrcf 0.35, awsrcf-trcf 0.30, awsrcf-nab 0.05로 fixed 0.60, seasonal 0.65에 못 미침. rrcf 0.15보다는 awsrcf 계열 두 설정이 높고 awsrcf-nab이 낮음. 지연 5건(2차)은 모든 모델이 0건. 첫 이벤트 뒤 점수가 낮아지는 rrcf의 형태가 AWS RCF에서도 일부 보임
+- QA 환경 실데이터 오탐: 하루 0.1건 기준은 fixed(0.010)와 awsrcf-nab(0.033)만 충족. awsrcf는 보호 설정 켬 1.044로 기준의 10배, seasonal(1.361)과 비슷한 크기
 
 ## 확인한 사실
 
@@ -312,10 +313,153 @@ reward_low_FP_rate, reward_low_FN_rate의 카테고리별 표는 같은 보고�
 
 ## 장애 주입 데이터
 
-- 평가하지 않음. 데이터 폴더가 수집 중이었음
-  - 첫 실행 폴더는 라벨과 원본 덤프가 있고 끝난 상태. 다만 같은 폴더에서 지연 측정 실행이 새로 시작되어 쓰는 중
-  - 결과 문서(`docs/results/m2-inject-lab.md`)가 아직 없음
-- 폴더에 쓰지 않았음. 파일 목록과 실행 로그의 마지막 줄만 확인했고 데이터 파일은 열지 않음
+장비에서 실제 LLM 서빙 엔진에 압축 일 주기 부하(1일 24분)를 걸고 장애를 예약 주입해 얻은 데이터. 정답 라벨이 있음. 실험 구성과 신호 정의는 `examples/inject-lab/README.md`. 재생 도구와 평가 규칙(점수 0.5 이상 3샘플 연속, 시간은 압축 일 주기를 86400초로 되돌려 모델에 입력)은 장애 주입 실험 브랜치의 `anomaly_detection.lab.replay`를 그대로 가져와 `python -m anomaly_detection.lab.replay`로 실행함. 모델 파라미터는 NAB 평가와 달리 파일별 규칙 없이 기본값
+
+- 1차 실행: 4개 시나리오 각 5건, 20건. 2차 실행: 지연 증가 5건(주입 강도를 높인 실행)
+- 모델: `fixed`, `seasonal`, `rcf`(rrcf)는 기본값. `awsrcf-nab`은 NAB 점수표 설정(shingle 1, 트리 100, 표본 256, 감쇠 1e-5, 점수를 8.0으로 나눔). `awsrcf`는 모드 `caster`, `awsrcf-trcf`는 모드 `trcf`로 어댑터 기본값(shingle 8, 트리 50, 표본 256)
+- 기존 모델 3개의 수치는 `docs/results/m2-inject-lab.md`의 값과 같게 재현됨(fixed 탐지율 0.60, seasonal 0.65, rcf 0.15)
+- 시드는 모델마다 1개, 이벤트는 시나리오당 5건이라 탐지율의 신뢰 구간이 매우 넓음
+
+### 1차 실행, 시나리오 합산 (신호 4개, 오탐은 신호당 하루당)
+
+| model | events | detected | recall | alerts | false alarms | precision | F1 | delay median (s) | false alarms per signal per lab day |
+|---|---|---|---|---|---|---|---|---|---|
+| fixed | 20 | 12 | 0.60 | 30 | 18 | 0.40 | 0.48 | 58 | 0.51 |
+| seasonal | 20 | 13 | 0.65 | 34 | 21 | 0.38 | 0.48 | 70 | 0.60 |
+| rcf | 20 | 3 | 0.15 | 6 | 3 | 0.50 | 0.23 | 65 | 0.09 |
+| awsrcf-nab | 20 | 1 | 0.05 | 4 | 3 | 0.25 | 0.08 | 30 | 0.09 |
+| awsrcf | 20 | 7 | 0.35 | 24 | 17 | 0.29 | 0.32 | 60 | 0.48 |
+| awsrcf-trcf | 20 | 6 | 0.30 | 16 | 10 | 0.38 | 0.33 | 58 | 0.28 |
+
+### 1차 실행, 시나리오별
+
+| scenario | signal | model | events | detected | recall | alerts | false alarms | of which during other injections | precision | F1 | delay median (s) | delay p90 (s) | false alarms per lab day |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| latency_rise | client_latency | fixed | 5 | 0 | 0.00 | 15 | 15 | 4 | 0.00 | 0.00 | n/a | n/a | 1.71 |
+| latency_rise | client_latency | seasonal | 5 | 1 | 0.20 | 13 | 12 | 3 | 0.08 | 0.11 | 110 | 110 | 1.36 |
+| latency_rise | client_latency | rcf | 5 | 1 | 0.20 | 3 | 2 | 1 | 0.33 | 0.25 | 100 | 100 | 0.23 |
+| latency_rise | client_latency | awsrcf-nab | 5 | 0 | 0.00 | 2 | 2 | 1 | 0.00 | 0.00 | n/a | n/a | 0.23 |
+| latency_rise | client_latency | awsrcf | 5 | 3 | 0.60 | 6 | 3 | 1 | 0.50 | 0.55 | 85 | 97 | 0.34 |
+| latency_rise | client_latency | awsrcf-trcf | 5 | 2 | 0.40 | 4 | 2 | 0 | 0.50 | 0.44 | 72 | 82 | 0.23 |
+| output_length_drop | output_tokens | fixed | 5 | 5 | 1.00 | 6 | 1 | 1 | 0.83 | 0.91 | 55 | 58 | 0.11 |
+| output_length_drop | output_tokens | seasonal | 5 | 5 | 1.00 | 7 | 2 | 2 | 0.71 | 0.83 | 45 | 53 | 0.23 |
+| output_length_drop | output_tokens | rcf | 5 | 1 | 0.20 | 1 | 0 | 0 | 1.00 | 0.33 | 25 | 25 | 0.00 |
+| output_length_drop | output_tokens | awsrcf-nab | 5 | 1 | 0.20 | 1 | 0 | 0 | 1.00 | 0.33 | 30 | 30 | 0.00 |
+| output_length_drop | output_tokens | awsrcf | 5 | 1 | 0.20 | 7 | 6 | 0 | 0.14 | 0.17 | 25 | 25 | 0.68 |
+| output_length_drop | output_tokens | awsrcf-trcf | 5 | 1 | 0.20 | 3 | 2 | 0 | 0.33 | 0.25 | 25 | 25 | 0.23 |
+| request_drop | request_rate | fixed | 5 | 5 | 1.00 | 5 | 0 | 0 | 1.00 | 1.00 | 80 | 92 | 0.00 |
+| request_drop | request_rate | seasonal | 5 | 5 | 1.00 | 5 | 0 | 0 | 1.00 | 1.00 | 80 | 143 | 0.00 |
+| request_drop | request_rate | rcf | 5 | 1 | 0.20 | 1 | 0 | 0 | 1.00 | 0.33 | 65 | 65 | 0.00 |
+| request_drop | request_rate | awsrcf-nab | 5 | 0 | 0.00 | 0 | 0 | 0 | n/a | 0.00 | n/a | n/a | 0.00 |
+| request_drop | request_rate | awsrcf | 5 | 3 | 0.60 | 7 | 4 | 1 | 0.43 | 0.50 | 55 | 71 | 0.45 |
+| request_drop | request_rate | awsrcf-trcf | 5 | 3 | 0.60 | 6 | 3 | 1 | 0.50 | 0.55 | 55 | 71 | 0.34 |
+| throughput_drop | decode_speed | fixed | 5 | 2 | 0.40 | 4 | 2 | 1 | 0.50 | 0.44 | 30 | 30 | 0.23 |
+| throughput_drop | decode_speed | seasonal | 5 | 2 | 0.40 | 9 | 7 | 3 | 0.22 | 0.29 | 112 | 202 | 0.80 |
+| throughput_drop | decode_speed | rcf | 5 | 0 | 0.00 | 1 | 1 | 0 | 0.00 | 0.00 | n/a | n/a | 0.11 |
+| throughput_drop | decode_speed | awsrcf-nab | 5 | 0 | 0.00 | 1 | 1 | 0 | 0.00 | 0.00 | n/a | n/a | 0.11 |
+| throughput_drop | decode_speed | awsrcf | 5 | 0 | 0.00 | 4 | 4 | 1 | 0.00 | 0.00 | n/a | n/a | 0.45 |
+| throughput_drop | decode_speed | awsrcf-trcf | 5 | 0 | 0.00 | 3 | 3 | 1 | 0.00 | 0.00 | n/a | n/a | 0.34 |
+
+### 2차 실행, 지연 증가만 (주입 강도 높임)
+
+| scenario | signal | model | events | detected | recall | alerts | false alarms | of which during other injections | precision | F1 | delay median (s) | delay p90 (s) | false alarms per lab day |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| latency_rise | client_latency | fixed | 5 | 0 | 0.00 | 0 | 0 | 0 | n/a | 0.00 | n/a | n/a | 0.00 |
+| latency_rise | client_latency | seasonal | 5 | 0 | 0.00 | 0 | 0 | 0 | n/a | 0.00 | n/a | n/a | 0.00 |
+| latency_rise | client_latency | rcf | 5 | 0 | 0.00 | 0 | 0 | 0 | n/a | 0.00 | n/a | n/a | 0.00 |
+| latency_rise | client_latency | awsrcf-nab | 5 | 0 | 0.00 | 0 | 0 | 0 | n/a | 0.00 | n/a | n/a | 0.00 |
+| latency_rise | client_latency | awsrcf | 5 | 0 | 0.00 | 1 | 1 | 0 | 0.00 | 0.00 | n/a | n/a | 0.41 |
+| latency_rise | client_latency | awsrcf-trcf | 5 | 0 | 0.00 | 0 | 0 | 0 | n/a | 0.00 | n/a | n/a | 0.00 |
+
+2차 실행의 신호 4개 합산 표(이벤트가 없는 세 신호의 오탐 포함):
+
+| model | events | detected | recall | alerts | false alarms | precision | F1 | delay median (s) | false alarms per signal per lab day |
+|---|---|---|---|---|---|---|---|---|---|
+| fixed | 5 | 0 | 0.00 | 0 | 0 | n/a | 0.00 | n/a | 0.00 |
+| seasonal | 5 | 0 | 0.00 | 0 | 0 | n/a | 0.00 | n/a | 0.00 |
+| rcf | 5 | 0 | 0.00 | 0 | 0 | n/a | 0.00 | n/a | 0.00 |
+| awsrcf-nab | 5 | 0 | 0.00 | 0 | 0 | n/a | 0.00 | n/a | 0.00 |
+| awsrcf | 5 | 0 | 0.00 | 8 | 8 | 0.00 | 0.00 | n/a | 0.82 |
+| awsrcf-trcf | 5 | 0 | 0.00 | 4 | 4 | 0.00 | 0.00 | n/a | 0.41 |
+
+### 이벤트별 최고 점수, 새 정상 학습 여부 확인 (1차 실행)
+
+이벤트를 시간 순으로 놓고 각 이벤트 구간(끝 5샘플 뒤까지)의 최고 점수를 적음. 마지막 열은 어떤 이벤트에도 속하지 않는 평가 구간 점수의 99분위수. `scripts/inject_event_scores.py` 출력
+
+| signal | model | event 1 | event 2 | event 3 | event 4 | event 5 | quiet p99 |
+|---|---|---|---|---|---|---|---|
+| request_rate | rcf | 1.00 | 0.11 | 0.06 | 0.03 | 0.05 | 0.10 |
+| request_rate | awsrcf-nab | 0.45 | 0.25 | 0.23 | 0.22 | 0.21 | 0.15 |
+| request_rate | awsrcf | 0.99 | 0.67 | 0.97 | 0.33 | 0.50 | 0.62 |
+| request_rate | awsrcf-trcf | 0.99 | 0.67 | 0.97 | 0.33 | 0.50 | 0.58 |
+| output_tokens | rcf | 1.00 | 0.07 | 0.02 | 0.02 | 0.02 | 0.04 |
+| output_tokens | awsrcf-nab | 0.60 | 0.28 | 0.24 | 0.23 | 0.22 | 0.15 |
+| output_tokens | awsrcf | 1.00 | 0.36 | 0.31 | 0.21 | 0.25 | 0.60 |
+| output_tokens | awsrcf-trcf | 1.00 | 0.38 | 0.31 | 0.22 | 0.25 | 0.44 |
+| decode_speed | rcf | 0.12 | 0.03 | 0.08 | 0.02 | 0.18 | 0.12 |
+| decode_speed | awsrcf-nab | 0.44 | 0.21 | 0.17 | 0.23 | 0.29 | 0.36 |
+| decode_speed | awsrcf | 0.91 | 0.13 | 0.32 | 0.12 | 0.19 | 0.95 |
+| decode_speed | awsrcf-trcf | 0.91 | 0.13 | 0.32 | 0.12 | 0.17 | 0.95 |
+| client_latency | rcf | 0.40 | 1.00 | 0.02 | 0.02 | 0.02 | 0.09 |
+| client_latency | awsrcf-nab | 0.28 | 0.47 | 0.15 | 0.09 | 0.49 | 0.39 |
+| client_latency | awsrcf | 0.99 | 0.99 | 0.00 | 0.05 | 0.74 | 0.80 |
+| client_latency | awsrcf-trcf | 0.99 | 0.99 | 0.05 | 0.05 | 0.74 | 0.80 |
+
+### 해석
+
+- 합산 탐지율: awsrcf 0.35, awsrcf-trcf 0.30, awsrcf-nab 0.05. 기존 모델은 fixed 0.60, seasonal 0.65, rcf 0.15. AWS RCF 어느 설정도 fixed와 seasonal에 못 미침. rrcf보다는 awsrcf와 awsrcf-trcf가 높고 awsrcf-nab은 낮음
+- 오탐: awsrcf가 하루당 신호당 0.48건으로 rrcf(0.09)의 5배쯤이고 seasonal(0.60)에 가까움. awsrcf-trcf는 0.28. awsrcf-nab은 0.09로 rrcf와 같지만 탐지가 1건뿐이라 알림 자체가 적은 결과
+- F1: fixed 0.48, seasonal 0.48, awsrcf-trcf 0.33, awsrcf 0.32, rrcf 0.23, awsrcf-nab 0.08
+- awsrcf-nab이 조용한 이유: 점수를 8.0으로 나눈 값이라 이 데이터에서 이벤트 최고 점수가 0.2에서 0.6 범위이고 알림 임계 0.5에 거의 닿지 않음. NAB 평가에서 이 설정의 최적 임계값은 0.43이었으나 임계값을 이 데이터에 맞춰 바꾸지는 않음
+- 시나리오별
+  - request_drop(신호가 0.03배로 급락): fixed, seasonal 5건 중 5건. awsrcf, awsrcf-trcf 3건, rrcf 1건, awsrcf-nab 0건
+  - output_length_drop(0.02배): fixed, seasonal 5건. awsrcf 계열 세 설정과 rrcf는 모두 1건
+  - throughput_drop(0.38배에서 0.96배, 건마다 들쭉날쭉): fixed, seasonal 2건. AWS RCF 세 설정과 rrcf는 0건
+  - latency_rise(1차, 신호가 거의 안 움직임): awsrcf 3건, awsrcf-trcf 2건, seasonal과 rrcf 1건, fixed와 awsrcf-nab 0건. 오탐이 같이 많아 우연 가능성을 배제하지 못함(awsrcf는 알림 6건 중 3건이 오탐)
+- 2차 실행(지연 5건): 모든 모델이 0건 탐지로 기존 문서와 같은 결론. awsrcf는 알림 8건이 모두 오탐(신호 4개 합산, 하루당 신호당 0.82건), awsrcf-trcf는 4건. 지연 신호만 보면 awsrcf가 1건
+- 새 정상 학습 문제: rrcf에서 관찰된 형태(첫 이벤트만 높고 이후 낮음)가 AWS RCF에서도 일부 보임. 원인이 장애가 새 정상으로 학습되는 것인지는 확인하지 못함
+  - rrcf: request_rate 최고 점수가 1.00, 0.11, 0.06, 0.03, 0.05. 이후 이벤트가 평소 구간 99분위수(0.10) 아래
+  - awsrcf-nab: request_rate 0.45, 0.25, 0.23, 0.22, 0.21. 첫 이벤트의 절반 수준으로 내려가지만 평소 99분위수(0.15)보다는 높게 유지. output_tokens도 0.60에서 0.28, 0.24, 0.23, 0.22로 같은 형태
+  - awsrcf: output_tokens는 1.00 뒤에 0.36, 0.31, 0.21, 0.25로 평소 99분위수(0.60) 아래로 떨어져 rrcf와 비슷한 형태. request_rate는 0.99, 0.67, 0.97, 0.33, 0.50으로 오르내림. 평소 99분위수가 0.62라 이후 이벤트가 평소 변동과 구분되지 않음
+  - decode_speed와 client_latency는 이벤트 건마다 신호 크기가 달라 이 형태 판단에 쓰지 않음
+  - 이벤트가 10분 간격(압축 일 주기의 0.4일)이고 표본 256개가 약 21분이라 학습 창에 직전 이벤트가 들어 있을 가능성이 있으나 창 크기를 바꿔 확인하지 않음
+- NAB에서 awsrcf(31.0)가 rrcf(21.7)보다 높았던 순서는 이 데이터의 합산 F1(0.32 대 0.23)에서도 같은 방향. 다만 이벤트가 20건이고 탐지율이 낮아 순위를 가리지 않음
+
+## QA 환경 실데이터 오탐 시험
+
+기존 재생 평가(`docs/results/m2-real-replay.md`)와 같은 데이터, 같은 도구(`anomaly-detection-replay`)로 AWS RCF 세 설정을 추가해 돌림. 데이터는 저장소와 맥에 없고 수치만 기록함
+
+- 데이터: LLM 서빙 클러스터 테스트 환경 8일치 Prometheus 범위 질의 34개, 시계열 203개, 60초 간격. 이상 라벨이 없어 모든 알림은 오탐 후보. 실사용 트래픽이 아니라 오탐 내성의 하한을 보는 용도
+- 절차: 앞 2일 워밍업, 방향 both, 알림 규칙은 점수 0.5 이상 3샘플 연속, 보호 설정 끔과 켬(`min_expected` 0.05, 허용 오차 0.05, 허용 비율 0.05). 기준선은 시계열당 하루 0.1건
+- 모델: 기존 `fixed`, `seasonal`, `rcf`는 이전 실행의 점수 캐시를 그대로 써서 수치가 이전 문서와 같음(0.010, 3.463과 1.361, 0.173과 0.110). AWS RCF 세 설정은 이번에 새로 돌림. 시드는 시계열 이름의 해시
+- 실행: 8 프로세스 병렬, 프로세스마다 JVM 하나(힙 1GB), 재생 소요 110초
+
+| model | guards | series | scored | failed | alerts | per series per day | median | p90 | max | series over 0.1/day | gap_resume | idle_to_burst | burst_end | other_up | other_down | no_history |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| fixed | off | 203 | 84 | 0 | 5 | 0.010 | 0.000 | 0.000 | 0.17 | 5 | 0 | 0 | 0 | 5 | 0 | 0 |
+| fixed | on | 203 | 84 | 0 | 5 | 0.010 | 0.000 | 0.000 | 0.17 | 5 | 0 | 0 | 0 | 5 | 0 | 0 |
+| seasonal | off | 203 | 132 | 0 | 2620 | 3.463 | 0.000 | 9.924 | 25.27 | 65 | 169 | 559 | 20 | 1738 | 118 | 16 |
+| seasonal | on | 203 | 132 | 0 | 1030 | 1.361 | 0.000 | 4.485 | 18.58 | 61 | 164 | 295 | 4 | 499 | 55 | 13 |
+| rcf | off | 203 | 102 | 0 | 105 | 0.173 | 0.000 | 0.502 | 1.00 | 46 | 7 | 19 | 1 | 62 | 14 | 2 |
+| rcf | on | 203 | 102 | 0 | 67 | 0.110 | 0.000 | 0.335 | 0.84 | 39 | 4 | 15 | 0 | 44 | 4 | 0 |
+| awsrcf-nab | off | 203 | 173 | 0 | 28 | 0.033 | 0.000 | 0.000 | 0.67 | 15 | 1 | 3 | 0 | 24 | 0 | 0 |
+| awsrcf-nab | on | 203 | 173 | 0 | 28 | 0.033 | 0.000 | 0.000 | 0.67 | 15 | 1 | 3 | 0 | 24 | 0 | 0 |
+| awsrcf | off | 203 | 173 | 0 | 2393 | 2.797 | 0.000 | 7.999 | 15.73 | 81 | 416 | 885 | 6 | 772 | 252 | 62 |
+| awsrcf | on | 203 | 173 | 0 | 893 | 1.044 | 0.000 | 2.845 | 8.70 | 77 | 204 | 243 | 4 | 349 | 60 | 33 |
+| awsrcf-trcf | off | 203 | 173 | 0 | 2068 | 2.417 | 0.000 | 7.331 | 14.56 | 78 | 405 | 645 | 6 | 755 | 205 | 52 |
+| awsrcf-trcf | on | 203 | 173 | 0 | 1082 | 1.264 | 0.000 | 3.481 | 10.38 | 75 | 286 | 211 | 5 | 427 | 118 | 35 |
+
+### 해석
+
+- 기준선 0.1/day를 지키는 모델은 fixed(0.010)와 awsrcf-nab(0.033). 나머지는 모두 초과
+- awsrcf-nab: 보호 설정 끔과 켬이 같음(알림 28건). 점수가 낮게 나오는 설정이라 보호 설정이 걸러낼 알림이 없음. 시계열 15개가 하루 0.1건을 넘고 최대 0.67. 대부분이 other_up(24건)
+- awsrcf(caster): 끔 2.797, 켬 1.044. seasonal(끔 3.463, 켬 1.361)과 같은 크기이고 rrcf(0.173, 0.110)의 10배쯤. 시계열 77개가 하루 0.1건을 넘음(켬). 임계값에서 0.5를 주는 기본 점수 환산이 알림용으로는 너무 민감하다는 NAB 평가 결과와 같은 방향
+- awsrcf-trcf: 끔 2.417, 켬 1.264. 보호 설정이 알림을 줄이는 비율은 awsrcf보다 작음(48퍼센트 대 63퍼센트)
+- 점수를 낸 시계열 수가 모델마다 다름(fixed 84, seasonal 132, rcf 102, AWS RCF 173). 하루당 평균은 점수를 낸 시계열 안에서만 계산하므로 모델 간 분모가 같지 않음. AWS RCF가 더 많은 시계열에 점수를 내는 이유는 확인하지 않음
+- 재생 중 모델이 중단된 시계열(`failed`)은 0건. rrcf에서 있었던 재귀 한도 초과 문제는 AWS RCF에서 나타나지 않음
+- 알림 맥락은 기존 문서와 같은 분류(gap_resume, idle_to_burst, burst_end, other_up, other_down, no_history)이며 awsrcf, awsrcf-trcf에서도 other_up과 idle_to_burst가 다수
+- 약한 라벨(테스트 실행 흔적)과의 겹침과 알림 시각의 원인은 이번에 확인하지 않음
+- AWS RCF 설정에 파일별 규칙이 없고(표본 256, 기본값) 점수 환산도 하나만 시험한 결과. 환산을 바꾸면 달라질 수 있으나 이 데이터에서 고르지 않음
 
 ## 한계와 확인하지 못한 것
 
@@ -327,6 +471,9 @@ reward_low_FP_rate, reward_low_FN_rate의 카테고리별 표는 같은 보고�
 - 단일 JVM에서 시계열을 하나씩 처리함. 병렬 처리와 여러 자식 프로세스는 시험하지 않음
 - amd64 실행과 이미지 빌드, 장시간 안정성은 미확인
 - NAB는 침묵의 장애 시나리오를 대신하지 못함. 일반 성능 확인용
+- 장애 주입 평가는 시나리오당 이벤트 5건, 모델당 시드 1개. 표본 크기 256과 모델 기본값만 시험했고 임계값이나 점수 환산을 이 데이터에 맞춰 바꾸지 않음
+- 새 정상 학습 여부는 이벤트별 최고 점수의 형태만 봄. 학습 창 크기나 시간 감쇠를 바꿔 원인을 가르지 않음
+- QA 환경 시험에서 AWS RCF가 점수를 낸 시계열 수(173)가 다른 모델과 달라 평균의 분모가 같지 않음
 
 ## 재현 명령
 
@@ -338,4 +485,9 @@ export ANOMALY_AWSRCF_JAVA_OPTS="-Xmx1g -XX:+UseParallelGC -XX:ParallelGCThreads
 uv run anomaly-detection-nab run --nab-dir /path/to/nab --models awsrcf-nab,awsrcf-trcf,awsrcf,awsrcf-grade \
     --scores-dir out/scores --workers 2 --mem-limit-gb 4
 uv run python scripts/bench_awsrcf.py --series 500 --rounds 30
+python -m anomaly_detection.lab.replay --signals run1/signals.csv --labels run1/labels.json \
+    --models fixed,seasonal,rcf,awsrcf-nab,awsrcf,awsrcf-trcf --step 5
+python scripts/inject_event_scores.py --signals run1/signals.csv --labels run1/labels.json
+uv run anomaly-detection-replay dumps/ --models fixed,seasonal,rcf,awsrcf-nab,awsrcf,awsrcf-trcf \
+    --workers 8 --cache-dir cache --out replay.md
 ```

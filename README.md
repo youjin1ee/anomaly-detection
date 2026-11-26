@@ -41,6 +41,7 @@ Models:
 | `seasonal` | median and MAD of the same time of day (and week) in the past, pooled over neighbouring slots | default; cheap, works after two days of history (defaults tuned on synthetic data), has a band. For bursty series that are idle most of the day, `idle_scale_ratio` stops bursts of a size seen before from alerting |
 | `rcf` | Random Cut Forest ([rrcf](https://github.com/kLabUM/rrcf)) over shingled, normalised values | shape changes that a band does not describe; heavier, no band |
 | `static` | fixed lower and upper limit | hard limits, and as a comparison baseline |
+| `toto` | next-step quantile forecast of [Toto 2.0](https://github.com/DataDog/toto) (Apache-2.0, 4M to 2.5B parameters) over the last 512 values; band is the 0.1 and 0.9 quantiles | optional extra `pip install 'anomaly-detection[toto]'` and a downloaded checkpoint (`model_dir`); CPU only here. Proof of concept, see [m3-poc-toto](docs/results/m3-poc-toto.md) for accuracy and cost |
 
 New model kinds register with `anomaly_detection.models.register_model(kind, factory)`. A model
 only has to implement `update(timestamp, value) -> ModelOutput | None`.

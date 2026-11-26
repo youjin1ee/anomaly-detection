@@ -124,11 +124,28 @@ results are never used, and nothing is tuned per file or per category.
 | `seasonal` | `slot_window = clamp(round(2400 s / interval), 1, 8)`, `min_points = min(18, 2 * (2 * slot_window + 1))`, daily and weekly seasonality, everything else default. The pooling keeps its default span of about 40 minutes at 5 minute data and shrinks to one neighbouring slot on 30 minute and hourly data |
 | `rcf` | `norm_window = clamp(round(86400 s / interval), 288, 1440)`, `reference_window = max(6, round(3600 s / interval))`, `sample_size = clamp(probation - 50, 64, 1024)` so that the forest is full and scores from the end of the probationary period, everything else default (shingle 8, 40 trees) |
 | `rcf-time` | `rcf` with time of day and week as extra dimensions |
+| `toto-4m`, `toto-22m` | no per-file rule: context 512 samples, first score after 128, score mapping at its default. The shortest file has a probationary period of 169 records, so every file is scored from the end of it |
 | `fixed` | lower and upper limit half the range of the probationary period below its minimum and above its maximum. The synthetic comparison (half the minimum, 1.5 times the maximum) breaks on zero and negative values, which NAB has. Score is 1 outside the limits and 0 inside |
 
 The timestamps are read as UTC. A record whose timestamp is not later than the previous one
 (NAB has a few duplicates and one backward step) is skipped by the pipeline and counts as no
 detection. Seed 0 is used for RCF in every file.
+
+### Toto 2.0 on NAB
+
+`anomaly-detection-nab run-toto` scores the corpus with the optional `toto` model (needs the
+`toto` extra and a downloaded checkpoint per size, one directory each). It does not call the
+model one record at a time: `models/toto.py:score_batch` predicts many steps of one file in one
+forward pass. Windows are the same as in the streaming path (the last 512 values before the
+record, never including it), and a test checks that both paths give the same scores
+(`tests/test_toto.py`, and with the real network when `TOTO_MODEL_DIR` is set).
+
+Score: the value is compared with the 0.1 and 0.9 quantiles of the one-step forecast. With `d`
+the distance outside the band (0 inside) and `w` the band width (at least 2 percent of the
+median), `r = d / w` and `score = r / (r + 1)`. A value inside the band scores 0, one band
+width beyond its edge 0.5. The mapping is monotone in `r`, so the NAB score, which picks its
+threshold on the corpus, does not depend on the constant; only the fixed 0.5 threshold and the
+event metrics do. The constant was set before the first run and not changed afterwards.
 
 ### Event metrics on NAB
 

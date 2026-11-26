@@ -68,3 +68,83 @@ and 1500 to 1504 for normal series, which were not used for tuning.
   a clean yardstick, not how many false alarms a real system produces.
 - Resolution is one minute. The scenario delays are floor-limited by the `for` clause.
 - Only single injected events, no overlapping failures, no gradual drift.
+
+## NAB (Numenta Anomaly Benchmark)
+
+`anomaly-detection-nab` runs the same models on the 58 files of NAB and scores them with the
+NAB score. It complements the synthetic scenarios: the data is real, the anomalies are
+labelled by others, and the numbers can be put next to published detectors. It does not
+replace them, because NAB has no silent failures of the kind this project targets.
+
+```sh
+uv run anomaly-detection-nab fetch --dest /path/to/nab          # data/ and labels/ only
+uv run anomaly-detection-nab run --nab-dir /path/to/nab --scores-dir out/scores --workers 8
+uv run anomaly-detection-nab report --nab-dir /path/to/nab --scores-dir out/scores
+uv run anomaly-detection-nab verify --nab-dir /path/to/NAB-checkout   # needs results/
+```
+
+The data is not stored in this repository. `fetch` downloads the pinned revision
+(`harness/nab_data.py`, `NAB_REF`), or `--nab-dir` can point at any checkout of the NAB
+repository.
+
+### Scoring
+
+Reimplemented in `harness/nab_score.py` from the published method, without copying NAB code.
+
+- Each labelled anomaly has a window. Per record the detector gives a score in [0, 1]; one
+  threshold per detector and profile turns scores into detections.
+- Only the best detection in a window counts, the earliest one. Its weight is
+  `2 * sigmoid(-5 * position) - 1`, position -1 at the left edge and 0 at the right edge. A
+  window without a detection costs `-fn_weight`.
+- A detection outside every window is a false positive with the same sigmoid, position
+  measured past the previous window's right edge in window widths, times `fp_weight`. Before
+  the first window or beyond 3 widths it is -1 times `fp_weight`.
+- The first `min(15 percent of records, 750)` records of every file are ignored.
+- Profiles: standard (fp 0.11, fn 1), reward_low_FP_rate (fp 0.22, fn 1), reward_low_FN_rate
+  (fp 0.11, fn 2). The true positive weight is 1 in all of them.
+- Normalisation: 0 for the null detector (nothing detected), 100 for a perfect detector
+  (all 116 windows detected at the left edge, no false positive).
+- Threshold: the single value per profile that maximises the raw score over the whole corpus
+  (the official `--optimize` step). The threshold is fitted on the test corpus. That is how
+  NAB defines the score, but it is optimistic, so the report also gives the score at a fixed
+  threshold of 0.5 and the best score among thresholds that detect something.
+- Per category scores use the corpus threshold and are normalised with the null and perfect
+  values of that category. NAB itself only defines the corpus score.
+
+### Parameter rule for the models
+
+NAB files differ in resolution (5 minutes, 10 minutes, 30 minutes, 1 hour), in length (1127 to
+22695 records) and in seasonality. Every parameter is derived from two numbers that are known
+before the first scored record: the sampling interval, the median positive gap of the first
+100 timestamps, and the probationary length `min(floor(0.15 * n), 750)`. Values, labels and
+results are never used, and nothing is tuned per file or per category.
+
+| model | rule |
+|---|---|
+| `seasonal` | `slot_window = clamp(round(2400 s / interval), 1, 8)`, `min_points = min(18, 2 * (2 * slot_window + 1))`, daily and weekly seasonality, everything else default. The pooling keeps its default span of about 40 minutes at 5 minute data and shrinks to one neighbouring slot on 30 minute and hourly data |
+| `rcf` | `norm_window = clamp(round(86400 s / interval), 288, 1440)`, `reference_window = max(6, round(3600 s / interval))`, `sample_size = clamp(probation - 50, 64, 1024)` so that the forest is full and scores from the end of the probationary period, everything else default (shingle 8, 40 trees) |
+| `rcf-time` | `rcf` with time of day and week as extra dimensions |
+| `fixed` | lower and upper limit half the range of the probationary period below its minimum and above its maximum. The synthetic comparison (half the minimum, 1.5 times the maximum) breaks on zero and negative values, which NAB has. Score is 1 outside the limits and 0 inside |
+
+The timestamps are read as UTC. A record whose timestamp is not later than the previous one
+(NAB has a few duplicates and one backward step) is skipped by the pipeline and counts as no
+detection. Seed 0 is used for RCF in every file.
+
+### Event metrics on NAB
+
+The same alert rule as above (score at least 0.5 for 3 consecutive records). A window is a
+true event; windows that end inside the probationary period are dropped and one that starts
+inside it is cut. Alerts must fire after the probationary period. Detection delay is measured
+from the window start. NAB windows are centred on the labelled anomaly and are about 10
+percent of the file long divided over the anomalies, so the delay includes the time before the
+anomaly itself and cannot be compared with the synthetic scenarios.
+
+### What this does not show
+
+- The NAB score is computed per record. A model that marks every record of a long deviation
+  pays for each of them, while an alert rule fires once. The report therefore also scores
+  `<model>+for3`, the model behind the `for: 3` clause (smallest score of the last three
+  records).
+- NAB scores of other detectors come from their authors and from the NAB README. They are
+  shown next to ours for orientation, not as a controlled comparison.
+- The rrcf based `rcf` here is not the AWS implementation that sits in the NAB scoreboard.

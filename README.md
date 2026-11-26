@@ -201,6 +201,17 @@ the numbers of the latest run in [docs/results/](docs/results/).
 uv run anomaly-detection-eval --models fixed,seasonal,rcf --variants 20 --workers 8
 ```
 
+`anomaly-detection-nab` runs the same models on the Numenta Anomaly Benchmark and reports the
+NAB score (three profiles), event metrics per category and the published scoreboard next to
+them. The data is downloaded on request and never stored in the repository; see the NAB
+section of [docs/evaluation.md](docs/evaluation.md).
+
+```sh
+uv run anomaly-detection-nab fetch --dest /path/to/nab
+uv run anomaly-detection-nab run --nab-dir /path/to/nab --scores-dir out/scores --workers 8
+uv run anomaly-detection-nab report --nab-dir /path/to/nab --scores-dir out/scores
+```
+
 ## Limitations
 
 - Models learn from what they see. A failure that lasts long enough becomes the new normal;

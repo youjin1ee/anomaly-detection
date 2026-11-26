@@ -193,7 +193,7 @@ Prometheus 호환 API (Prometheus, VictoriaMetrics, Thanos, Mimir 등)
 ## 데이터
 
 공개 데이터셋
-- NAB(Numenta Anomaly Benchmark): 레포 MIT 라이선스(Copyright 2014-2024 Numenta). 라벨된 시계열 58개, 실제 데이터 다수(AWS CloudWatch, 광고, 트래픽, 트윗 등) 포함. 데이터 개별 라이선스는 README에서 별도 명시를 찾지 못했으므로 1단계에서 확인
+- NAB(Numenta Anomaly Benchmark): 레포 MIT 라이선스(Copyright 2014-2024 Numenta). 라벨된 시계열 58개, 실제 데이터 다수(AWS CloudWatch, 광고, 트래픽, 트윗 등) 포함. 데이터 개별 라이선스는 README에서 별도 명시를 찾지 못함. 확인 내용은 `docs/results/m2-nab.md`
 - NAB 점수 프로파일: Standard, Reward Low FP, Reward Low FN. RCF는 NAB 점수표에 AWS 독점 구현으로 등재(Standard 51.7, Reward Low FP 38.4, Reward Low FN 59.7. 점수표는 NAB v1.0 기준). 우리 구현의 결과와 비교할 때 구현이 다르다는 점을 같이 기록
 - NAB는 정상, 이상 시계열이 섞인 범용 벤치마크라 침묵의 장애 시나리오를 대신하지는 못함. 알고리즘 일반 성능 확인용
 
@@ -218,10 +218,10 @@ Prometheus 호환 API (Prometheus, VictoriaMetrics, Thanos, Mimir 등)
   - 산출물: `docs/research/` 아래 RCF, 예측 밴드, AMP, 라이선스, 평가 방법 정리. 이 계획의 확인 못 한 항목 해소 목록
   - 해소할 항목: Java RCF jar 배포처와 래퍼 설치 절차, Rust 구현의 파이썬 연동 가능성, ThresholdedRCF의 밴드 출력 가능성, NAB 데이터 라이선스, AMP 운영 출력 이름과 요금
   - 완료 조건: 모든 항목에 출처 URL 또는 직접 실행 결과가 붙고, 확인 불가 항목은 그렇게 표시
-- [x] 2단계 평가 하네스와 합성 데이터 (1차 마일스톤에서 구현, NAB 로더와 NAB 점수는 제외)
+- [x] 2단계 평가 하네스와 합성 데이터 (1차 마일스톤에서 구현. NAB 로더와 NAB 점수는 2차 마일스톤에서 구현, `docs/results/m2-nab.md`)
   - 산출물: 합성 생성기(침묵의 장애 3개 시나리오 주입), 라벨 형식, 지표 계산기(이벤트 단위 precision, recall, F1, 탐지 지연, 하루당 오탐 수, NAB 점수), NAB 로더
   - 완료 조건: 같은 시드에서 같은 데이터와 라벨이 재현되고, 기준 탐지기 더미(항상 정상, 항상 이상)로 지표가 기대값과 일치
-- [ ] 3단계 기준선 측정 (1차 마일스톤에서 고정 임계와 계절성 기준선은 측정, NAB 제외)
+- [ ] 3단계 기준선 측정 (1차 마일스톤에서 고정 임계와 계절성 기준선은 측정. NAB는 2차 마일스톤에서 측정, `docs/results/m2-nab.md`)
   - 산출물: 고정 임계 방식(절대값 임계)과 recording rule 계열 방식(계절성 중앙값과 MAD) 결과표
   - recording rule 방식은 하네스에서 같은 수식으로 구현하고, 표본 몇 개는 실제 PromQL로도 계산해 일치를 확인
   - 완료 조건: 3개 시나리오와 NAB에 대한 기준선 지표 확정. 성공 기준 표의 제안값을 이 결과로 재조정해 사용자 확인
@@ -250,7 +250,7 @@ Prometheus 호환 API (Prometheus, VictoriaMetrics, Thanos, Mimir 등)
 - 계절성 기준선: 시나리오 4개 행 모두 탐지율 100%, 정상 구간 오탐 0건, 탐지 지연 중앙값 2.0에서 2.5분
 - RCF(rrcf): 탐지율 85%에서 100%, 오탐 하루당 시계열 0.01에서 0.09건. 처리량 시나리오가 성공 기준 90%에 못 미침
 - 고정 임계: 처리량 하락과 스텝 시간 증가를 한 건도 못 잡음(0%)
-- 미측정: 재시작 복구 시간, 500시리즈 부하, NAB
+- 미측정: 재시작 복구 시간, 500시리즈 부하. NAB는 `docs/results/m2-nab.md`
 - 남은 쟁점: 계절성 기준선이 합성 가정에 유리한 점, RCF 민감도 실험, 예측 밴드 모델, 실데이터 재생
 
 ## 실행 환경

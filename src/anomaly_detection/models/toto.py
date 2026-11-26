@@ -59,7 +59,8 @@ class TotoEngine:
             from toto2 import Toto2Model
         except ImportError as exc:  # pragma: no cover - depends on the environment
             raise RuntimeError(
-                "the toto model needs the optional dependencies: pip install 'anomaly-detection[toto]'"
+                "the toto model needs the optional dependencies: "
+                "pip install 'anomaly-detection[toto]'"
             ) from exc
         self._torch = torch
         if threads:
@@ -71,7 +72,7 @@ class TotoEngine:
     def forecast(self, windows: np.ndarray) -> np.ndarray:
         torch = self._torch
         x = torch.from_numpy(np.ascontiguousarray(windows, dtype=np.float32)).unsqueeze(1)
-        batch, _, length = x.shape
+        batch = x.shape[0]
         inputs = {
             "target": x,
             "target_mask": torch.ones_like(x, dtype=torch.bool),

@@ -38,7 +38,7 @@ Models:
 
 | kind | what it does | when to use |
 |---|---|---|
-| `seasonal` | median and MAD of the same time of day (and week) in the past, pooled over neighbouring slots | default; cheap, works after two days of history (defaults tuned on synthetic data), has a band |
+| `seasonal` | median and MAD of the same time of day (and week) in the past, pooled over neighbouring slots | default; cheap, works after two days of history (defaults tuned on synthetic data), has a band. For bursty series that are idle most of the day, `idle_scale_ratio` stops bursts of a size seen before from alerting |
 | `rcf` | Random Cut Forest ([rrcf](https://github.com/kLabUM/rrcf)) over shingled, normalised values | shape changes that a band does not describe; heavier, no band |
 | `static` | fixed lower and upper limit | hard limits, and as a comparison baseline |
 
@@ -201,6 +201,19 @@ the numbers of the latest run in [docs/results/](docs/results/).
 uv run anomaly-detection-eval --models fixed,seasonal,rcf --variants 20 --workers 8
 ```
 
+`anomaly-detection-replay` replays a recorded dump of your own metrics (any Prometheus range
+query exported to CSV with the columns `timestamp`, `labels`, `value`, plain or gzip, one file
+per query) through the same models and counts alerts per series per day after a warm-up
+period. A recording has no labels, so every alert is a candidate false alarm. It is meant for
+checking how many alerts a model would have raised on your own quiet or messy data, with and
+without the low-traffic guards. The numbers of one such run are in
+[docs/results/m2-real-replay.md](docs/results/m2-real-replay.md).
+
+```sh
+uv run anomaly-detection-replay dumps/ --models fixed,seasonal,rcf --warmup-days 2 \
+    --workers 4 --cache-dir .replay-cache --json alerts.json
+```
+
 ## Limitations
 
 - Models learn from what they see. A failure that lasts long enough becomes the new normal;
@@ -212,6 +225,8 @@ uv run anomaly-detection-eval --models fixed,seasonal,rcf --variants 20 --worker
   that the daily estimate is used and weekends can look anomalous.
 - RCF is pure Python (rrcf), a few milliseconds per sample and per series. Hundreds of series
   at a one minute interval are fine; a long backfill for each of them is slow. It has no band.
+  On a series that is almost flat, rrcf can build a chain-shaped tree that exceeds the recursion
+  limit; the forest is then rebuilt and the series is silent until it has refilled.
 - rrcf imports `pkg_resources`, so the project pins `setuptools<81`.
 - One series, one model: no multivariate detection and no root cause analysis.
 - Forecast-band models (statsforecast and similar) are not included; the model registry is the

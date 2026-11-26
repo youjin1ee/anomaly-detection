@@ -139,3 +139,20 @@ def test_model_error_is_recorded_not_raised(monkeypatch):
     assert raw.error == "RecursionError at sample 2"
     res = evaluate_series(_series(np.ones(10)), raw, "seasonal", 60, 0, Guards(), AlertRule())
     assert res.error and summarize_model([res])["series_failed"] == 1
+
+
+def test_vectorised_guards_equal_scalar_rules():
+    rng = np.random.default_rng(3)
+    n = 500
+    values = rng.uniform(0, 100, n)
+    raw = RawOutput(rng.uniform(0, 1, n), rng.uniform(0, 100, n))
+    raw.score[::7] = np.nan
+    guards = Guards(0.1, 0.05, 0.1)
+    for direction in ("both", "above", "below"):
+        vec = guarded_scores(raw, values, guards, scale=80.0, direction=direction)
+        for i in range(n):
+            if np.isnan(raw.score[i]):
+                assert np.isnan(vec[i])
+                continue
+            want = apply_guards(raw.score[i], values[i], raw.expected[i], direction, 8.0, 4.0, 0.1)
+            assert vec[i] == want

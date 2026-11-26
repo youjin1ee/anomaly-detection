@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 
 from ..models import create_model
-from ..pipeline import SeriesPipeline, apply_guards
+from ..pipeline import SeriesPipeline
 from .metrics import AlertRule, alert_spans
 from .runner import ModelSpec, fixed_thresholds
 
@@ -186,19 +186,18 @@ def guarded_scores(
     raw: RawOutput, values: np.ndarray, guards: Guards, scale: float, direction: str = "both"
 ) -> np.ndarray:
     """Apply direction and guards to stored model scores, the way SeriesPipeline does."""
-    out = np.full(len(values), np.nan)
     floor, tol = guards.min_expected_frac * scale, guards.tolerance_frac * scale
-    for i in np.flatnonzero(np.isfinite(raw.score)):
-        out[i] = apply_guards(
-            raw.score[i],
-            values[i],
-            raw.expected[i],
-            direction,
-            floor,
-            tol,
-            guards.tolerance_ratio,
-        )
-    return out
+    # Same rules as apply_guards, on whole arrays (a test keeps the two in step).
+    ok = np.isfinite(raw.score)
+    dev = np.where(ok, values - raw.expected, 0.0)
+    zero = np.zeros(len(values), dtype=bool)
+    if direction == "above":
+        zero |= dev <= 0
+    elif direction == "below":
+        zero |= dev >= 0
+    zero |= (dev < 0) & (raw.expected < floor)
+    zero |= (np.abs(dev) <= tol) | (np.abs(dev) <= guards.tolerance_ratio * np.abs(raw.expected))
+    return np.where(ok, np.where(zero, 0.0, raw.score), np.nan)
 
 
 def alert_context(values: np.ndarray, first: int, idle_level: float, lookback: int = 30) -> str:

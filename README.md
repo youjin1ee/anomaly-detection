@@ -42,6 +42,7 @@ Models:
 | `rcf` | Random Cut Forest ([rrcf](https://github.com/kLabUM/rrcf)) over shingled, normalised values | shape changes that a band does not describe; heavier, no band |
 | `awsrcf` | AWS Random Cut Forest (Java, Apache-2.0) through a Java child process, optional | a forest that scores shape and, in mode `caster`, also gives an expected value and a calibrated band; needs a JVM, see [docs/design.md](docs/design.md#aws-rcf-java-integration) |
 | `static` | fixed lower and upper limit | hard limits, and as a comparison baseline |
+| `toto` | next-step quantile forecast of [Toto 2.0](https://github.com/DataDog/toto) (Apache-2.0, 4M to 2.5B parameters) over the last 512 values; band is the 0.1 and 0.9 quantiles | optional extra `pip install 'anomaly-detection[toto]'` and a downloaded checkpoint (`model_dir`); CPU only here. Proof of concept, see [m3-poc-toto](docs/results/m3-poc-toto.md) for accuracy and cost |
 
 New model kinds register with `anomaly_detection.models.register_model(kind, factory)`. A model
 only has to implement `update(timestamp, value) -> ModelOutput | None`.

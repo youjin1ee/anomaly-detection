@@ -40,6 +40,7 @@ Models:
 |---|---|---|
 | `seasonal` | median and MAD of the same time of day (and week) in the past, pooled over neighbouring slots | default; cheap, works after two days of history (defaults tuned on synthetic data), has a band. For bursty series that are idle most of the day, `idle_scale_ratio` stops bursts of a size seen before from alerting |
 | `rcf` | Random Cut Forest ([rrcf](https://github.com/kLabUM/rrcf)) over shingled, normalised values | shape changes that a band does not describe; heavier, no band |
+| `subpca` | Sub-PCA (the TSB-AD top univariate method), streaming: reconstruction error of the newest window against a PCA of recent windows, numpy only | shape changes in series with a regular pattern; no band; first score after about 270 samples. Defaults and NAB score in [docs/design.md](docs/design.md#sub-pca) |
 | `awsrcf` | AWS Random Cut Forest (Java, Apache-2.0) through a Java child process, optional | a forest that scores shape and, in mode `caster`, also gives an expected value and a calibrated band; needs a JVM, see [docs/design.md](docs/design.md#aws-rcf-java-integration) |
 | `tspulse` | IBM Granite TSPulse (1M parameters, zero-shot, Apache-2.0): three heads (time, fft, one step forecast), each scaled against its own history, maximum taken; band from forecast residuals | experimental. Needs the `tspulse` extra and the model files; 512 samples of context plus about 50 samples of history before the first score; CPU only |
 | `static` | fixed lower and upper limit | hard limits, and as a comparison baseline |

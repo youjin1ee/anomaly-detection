@@ -142,3 +142,73 @@ that is the part to copy into the image.
 - State is not persisted: a restart replays the backfill, which costs about as much per sample
   as live scoring.
 - Only linux/arm64 with Temurin 21 was run. amd64 was not.
+
+## Sub-PCA
+
+Model `subpca` (`models/subpca.py`), numpy only.
+
+### Origin and licence
+
+- TSB-AD (TheDatumOrg/TSB-AD, NeurIPS 2024 benchmark) ranks Sub-PCA first among univariate
+  detectors. Its `LICENSE` is Apache-2.0, checked on the `main` branch on 2026-11-26. Its
+  `models/PCA.py` is adapted from pyod, which is BSD-2-Clause.
+- No code is copied or vendored. Only the idea (PCA over sliding subsequences) and the
+  published default parameters were used. The implementation here is written from the method
+  description.
+
+### What TSB-AD does and what is different here
+
+| | TSB-AD `Sub_PCA` | `subpca` here |
+|---|---|---|
+| mode | offline, one fit on the whole series, then scores the same series | streaming, refit on a moving span of recent subsequences |
+| window | dominant autocorrelation period (rank 1), 125 if none in 3 to 300 | fixed, default 16 |
+| components | `n_components=None` (all); the grid also has 0.25, 0.5, 0.75 | default 0.75 of the variance (the top of their grid) |
+| score | sum over the selected eigenvectors of the distance to the vector divided by the explained variance ratio | root mean square reconstruction error, as asked for this project |
+| normalisation | z-score per column | trailing median and MAD of the training span |
+
+All components with a reconstruction error would give an error of zero, so a component count
+below the window length is required here.
+
+### Defaults and why
+
+| parameter | default | reason |
+|---|---|---|
+| `window` | 16 | see the NAB sweep below: windows 6 to 20 all land at 17 to 24, 16 is inside the TSB-AD style range and short enough to refit often. Not tuned per file |
+| `n_components` | 0.75 | from the TSB-AD grid; a share of the variance adapts to the file instead of a fixed count |
+| `train_size` | 1024 | about 3.5 days at 5 minute data, the same span as the default `sample_size` of `rcf` |
+| `min_train` | 256 | first score after 256 subsequences, which is record 271 for window 16. Enough for a stable PCA of 16 dimensions |
+| `retrain_every` | 64 | an SVD of 1024 x 16 takes about a millisecond, so it is cheap. Refitting every 288 instead cost 6 to 8 NAB points in the sweep, because the model lags behind drift |
+| `exclude_score` | off | see below |
+| score | `log(1+r) / (log(1+r) + log(1+2))` | `r` is the error divided by the 99th percentile of the training errors. A logistic saturated at exactly 1.0 on NAB (errors reach millions of times the reference), which ties records that a threshold must rank |
+
+### Leaving high scores out of the fit
+
+`exclude_score` leaves subsequences that scored at or above the value out of the next fit, so
+an anomaly does not become the new normal. `exclude_max_run` (default 2 x window) returns a run
+that lasts longer to the training set, because that is a level shift and should be learned.
+
+Default is off. On the 58 NAB files (standard profile, official one threshold protocol,
+window 16, 0.75 of the variance):
+
+| `exclude_score` | NAB standard |
+|---|---|
+| off | 17.8 |
+| 0.7, run limit 16 | 16.3 |
+| 0.5, run limit 16 | 13.3 |
+| 0.5, run limit 32 or 64 | 6.4 and 4.7 |
+| 0.5 without a run limit | 0.0 |
+
+NAB has many level shifts and the model that keeps a shift out of its training set goes on
+alerting. A unit test (`tests/test_subpca.py`) shows the effect it is meant for: the same burst
+a second time is still found with exclusion and learned as normal without it. Use it where
+anomalies are short bursts and level shifts are rare, and keep `exclude_max_run` small.
+
+### NAB result
+
+One run, no per-file parameter (`anomaly-detection-nab run --models subpca`): standard 17.8,
+reward_low_FP_rate 14.3, reward_low_FN_rate 19.6 at one corpus threshold of 0.5985. At the
+fixed threshold 0.5 the standard score is 5.0. The sweep over window (6, 8, 12, 16, 20),
+components (0.5, 0.75, 2, 3) and refit period (64, 288) gave 7.6 to 24.1, the best being
+window 6 with 3 components refitted every 64 samples. That setting was not adopted: it was
+chosen on the same corpus it is scored on, and a window of 6 is not a subsequence in the
+sense of the method.

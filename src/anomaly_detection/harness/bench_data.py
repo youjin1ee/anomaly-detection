@@ -44,7 +44,8 @@ class Machine:
 def label_events(labels: np.ndarray) -> list[tuple[int, int]]:
     """Runs of 1 as (first, last) inclusive row indices."""
     d = np.diff(np.concatenate([[0], np.asarray(labels, dtype=np.int8), [0]]))
-    return [(int(s), int(e) - 1) for s, e in zip(np.where(d == 1)[0], np.where(d == -1)[0])]
+    starts, ends = np.where(d == 1)[0], np.where(d == -1)[0]
+    return [(int(s), int(e) - 1) for s, e in zip(starts, ends, strict=True)]
 
 
 def _read_matrix(path: Path) -> np.ndarray:
@@ -115,6 +116,4 @@ def load_psm(root: str | Path) -> list[Machine]:
     # The last train row and the first test row carry the same minute index. The test row
     # is kept (it has a label), the train row is dropped.
     keep = tr_ts < te_ts[0]
-    return [
-        Machine("psm", train[keep], test, lab[:, 0].astype(np.int8), tr_ts[keep], te_ts)
-    ]
+    return [Machine("psm", train[keep], test, lab[:, 0].astype(np.int8), tr_ts[keep], te_ts)]

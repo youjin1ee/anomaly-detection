@@ -27,10 +27,8 @@ def test_server_scores_is_max_and_keeps_all_nan_rows():
 def test_average_precision():
     y = np.array([0, 0, 1, 1])
     assert average_precision(np.array([0.1, 0.2, 0.8, 0.9]), y) == 1.0
-    # one positive ranked first, the other last: 1 * 0.5 + 0.5 * 0.5
-    assert average_precision(np.array([0.9, 0.2, 0.1, 0.8]), np.array([0, 0, 1, 1])) == pytest.approx(
-        0.5 * 1.0 + 0.5 * 2 / 4
-    )
+    # ranking neg, pos, neg, pos: 0.5 * 1/2 + 0.5 * 2/4
+    assert average_precision(np.array([0.9, 0.2, 0.1, 0.8]), y) == 0.5
     # equal scores are one step: precision is the base rate
     assert average_precision(np.full(4, 0.5), y) == 0.5
     assert np.isnan(average_precision(np.ones(3), np.zeros(3)))
@@ -68,7 +66,7 @@ def test_point_adjust_inflates():
     s[7] = 1.0  # one hit in a 10 row event
     assert point_adjust_counts(s, y, 0.5) == (10, 0, 0)
     assert pa_f1_at([(s, y)], 0.5) == 1.0
-    f1, thr = pa_oracle_f1([(s, y)])
+    f1, _ = pa_oracle_f1([(s, y)])
     assert f1 == 1.0
 
 

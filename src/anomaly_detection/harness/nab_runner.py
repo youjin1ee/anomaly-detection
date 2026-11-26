@@ -26,6 +26,9 @@ from .nab_data import NabSeries
 from .nab_score import probation_length
 
 NAB_MODELS = ("fixed", "seasonal", "rcf", "rcf-time")
+# Models that need the optional Java bridge (see models/awsrcf.py). Not in the default run.
+NAB_AWSRCF_MODELS = ("awsrcf-nab", "awsrcf-trcf", "awsrcf")
+NAB_ALL_MODELS = NAB_MODELS + NAB_AWSRCF_MODELS
 PROBE_RECORDS = 100
 POOL_SECONDS = 2400.0  # pooling half width of the seasonal model at the default 5 minute data
 
@@ -58,6 +61,26 @@ def model_params(name: str, interval: float, n_records: int) -> dict[str, Any]:
         if name == "rcf-time":
             params["time_features"] = True
         return params
+    if name == "awsrcf-nab":
+        # The setting the NAB scoreboard entry of AWS RCF was produced with (the SQL file in
+        # NAB's detectors/random_cut_forest): 100 trees, sample 256, decay 100000 records,
+        # shingle 1, raw score divided by log2(sample) = 8. Fixed, independent of the file.
+        return {
+            "mode": "rcf",
+            "shingle_size": 1,
+            "num_trees": 100,
+            "sample_size": 256,
+            "time_decay": 1e-5,
+            "score_div": 8.0,
+        }
+    if name in ("awsrcf", "awsrcf-trcf"):
+        probation = probation_length(n_records)
+        return {
+            "mode": "caster" if name == "awsrcf" else "trcf",
+            # same rule as rcf: the forest is full at the end of the probationary period
+            "sample_size": int(min(1024, max(64, probation - 50))),
+            "reference_window": int(max(6, round(3600.0 / interval))),
+        }
     raise ValueError(f"unknown NAB model {name!r}")
 
 
@@ -77,7 +100,8 @@ def score_series(name: str, series: NabSeries, seed: int = 0) -> tuple[np.ndarra
     if name == "fixed":
         kind, params = "static", fixed_limits(series.values, probation_length(n))
     else:
-        kind, params = ("rcf" if name.startswith("rcf") else name), model_params(name, interval, n)
+        kind = "rcf" if name.startswith("rcf") else "awsrcf" if name.startswith("awsrcf") else name
+        params = model_params(name, interval, n)
     model = create_model(kind, params, interval, seed=seed)
     pipe = SeriesPipeline(model, direction="both")
     scores = np.full(n, np.nan)
@@ -91,6 +115,9 @@ def score_series(name: str, series: NabSeries, seed: int = 0) -> tuple[np.ndarra
         res = pipe.update(float(series.timestamps[i]), float(v))
         if res is not None:
             scores[i] = res.score
+    close = getattr(model, "close", None)
+    if close is not None:
+        close()  # frees the series in the Java bridge
     return scores, (time.perf_counter() - t0) / max(fed, 1) * 1e6
 
 
@@ -123,7 +150,7 @@ def run_models(
 ) -> dict[str, ModelScores]:
     jobs = [(name, s, seed) for name in names for s in corpus]
     # Biggest, slowest jobs first so the pool is busy until the end.
-    jobs.sort(key=lambda j: (not j[0].startswith("rcf"), -len(j[1].values)))
+    jobs.sort(key=lambda j: (not j[0].startswith(("rcf", "awsrcf")), -len(j[1].values)))
     out = {name: ModelScores({}, {}) for name in names}
     ctx = mp.get_context("spawn")
     with ctx.Pool(

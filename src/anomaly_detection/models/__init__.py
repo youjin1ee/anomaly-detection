@@ -1,6 +1,8 @@
-"""Built-in models. Importing this package registers them."""
+"""Built-in models. Importing this package registers them.
 
-from . import rcf, seasonal, static  # noqa: F401  (registration side effects)
+`awsrcf` needs a JVM and the AWS jars at use time, not at import."""
+
+from . import awsrcf, rcf, seasonal, static  # noqa: F401  (registration side effects)
 from .base import Model, ModelOutput, available_models, create_model, register_model
 
 __all__ = ["Model", "ModelOutput", "available_models", "create_model", "register_model"]

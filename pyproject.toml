@@ -38,6 +38,11 @@ tspulse = [
     "granite-tsfm==0.3.12",
 ]
 
+# Reads the Datadog BOOM arrow files (harness/boom_data.py). The tspulse extra brings it too.
+boom = [
+    "pyarrow>=15",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

@@ -19,6 +19,10 @@ dependencies = [
 [project.scripts]
 anomaly-detection = "anomaly_detection.cli:main"
 anomaly-detection-eval = "anomaly_detection.harness.cli:main"
+anomaly-detection-loadgen = "anomaly_detection.lab.loadgen:main"
+anomaly-detection-injector = "anomaly_detection.lab.injector:main"
+anomaly-detection-dump = "anomaly_detection.lab.dump:main"
+anomaly-detection-replay = "anomaly_detection.lab.replay:main"
 
 [dependency-groups]
 dev = [

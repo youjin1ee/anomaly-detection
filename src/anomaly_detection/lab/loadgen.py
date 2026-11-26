@@ -8,8 +8,13 @@
 - Own metrics on /metrics (Prometheus text format): sent requests by outcome, client side
   request duration, in flight requests, target rate, active fault.
 
+With `--trace file.npz` (made by `lab.azure`) arrivals and lengths come from a replayed trace
+instead: each request is sent at its trace time with the trace's context and generated token
+counts, as a token id prompt to /v1/completions with ignore_eos, so lengths are exact.
+
 Faults (all keep HTTP 200 where the endpoint does):
-  request_drop     arrival rate is multiplied by `factor` (default 0.03)
+  request_drop     arrival rate is multiplied by `factor` (default 0.03); a trace arrival is
+                   kept with probability `factor`
   output_drop      the output token cap becomes 1 to 3 tokens
   latency_rise     `delay` seconds are added before every received chunk and before the first
                    byte: a slow path between client and server
@@ -25,7 +30,10 @@ import random
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
+
+import numpy as np
 
 from .timescale import target_rate
 
@@ -101,27 +109,41 @@ class State:
         return "\n".join(lines) + "\n"
 
 
-def one_request(url: str, model: str, rng: random.Random, state: State, args) -> None:
+def one_request(
+    url: str,
+    model: str,
+    rng: random.Random,
+    state: State,
+    args,
+    shape: tuple[int, int] | None = None,
+) -> None:
+    """`shape` is (context tokens, generated tokens) of a trace request, else lengths are drawn."""
     u = urlparse(url)
     with state.lock:
         fault = dict(state.fault) if state.fault else {}
         state.inflight += 1
-    words = int(
-        lognormal(rng, args.prompt_words_median, args.prompt_sigma, 8, args.prompt_words_max)
-    )
-    if fault.get("kind") == "output_drop":
-        max_tokens = rng.randint(1, 3)
+    if shape is not None:
+        max_tokens = rng.randint(1, 3) if fault.get("kind") == "output_drop" else shape[1]
+        path = "/v1/completions"
+        payload = {
+            "prompt": [rng.randrange(1000, 150000) for _ in range(shape[0])],
+            "ignore_eos": True,
+        }
     else:
-        max_tokens = int(lognormal(rng, args.max_tokens_median, args.max_tokens_sigma, 8, 512))
-    body = json.dumps(
-        {
-            "model": model,
+        words = int(
+            lognormal(rng, args.prompt_words_median, args.prompt_sigma, 8, args.prompt_words_max)
+        )
+        if fault.get("kind") == "output_drop":
+            max_tokens = rng.randint(1, 3)
+        else:
+            max_tokens = int(lognormal(rng, args.max_tokens_median, args.max_tokens_sigma, 8, 512))
+        path = "/v1/chat/completions"
+        payload = {
             "messages": [{"role": "user", "content": make_prompt(rng, words)}],
-            "max_tokens": max_tokens,
-            "temperature": 0.7,
-            "stream": True,
             "chat_template_kwargs": {"enable_thinking": False},
         }
+    body = json.dumps(
+        {**payload, "model": model, "max_tokens": max_tokens, "temperature": 0.7, "stream": True}
     )
     delay = float(fault.get("delay", 0.0)) if fault.get("kind") == "latency_rise" else 0.0
     t0 = time.monotonic()
@@ -130,7 +152,7 @@ def one_request(url: str, model: str, rng: random.Random, state: State, args) ->
         conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=args.timeout)
         if delay:
             time.sleep(delay)
-        conn.request("POST", "/v1/chat/completions", body, {"Content-Type": "application/json"})
+        conn.request("POST", path, body, {"Content-Type": "application/json"})
         resp = conn.getresponse()
         if resp.status == 200:
             for raw in resp:
@@ -194,6 +216,33 @@ def serve_control(state: State, listen: str) -> ThreadingHTTPServer:
     return srv
 
 
+def replay_trace(args, state: State, rng: random.Random) -> None:
+    """Send the requests of an npz trace at epoch + t. Ends after the last arrival."""
+    z = np.load(args.trace)
+    t, ctx, gen = z["t"], z["ctx"], z["gen"]
+    i = int(np.searchsorted(t, time.time() - args.epoch))  # a late start skips what is past
+    while i < len(t):
+        now = time.time() - args.epoch
+        # trace arrivals per second around now, for the target rate gauge
+        state.rate = float(np.searchsorted(t, now + 30) - np.searchsorted(t, now - 30)) / 60
+        if t[i] > now:
+            time.sleep(min(t[i] - now, 1.0))
+            continue
+        with state.lock:
+            fault = state.fault
+            dropping = fault and fault["kind"] == "request_drop"
+            keep = float(fault.get("factor", 0.03)) if dropping else 1.0
+        shape = (int(ctx[i]), int(gen[i]))
+        i += 1
+        if rng.random() >= keep or state.inflight >= args.max_inflight:
+            continue
+        threading.Thread(
+            target=one_request,
+            args=(args.target, args.model, random.Random(rng.random()), state, args, shape),
+            daemon=True,
+        ).start()
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="anomaly-detection-loadgen", description=__doc__)
     p.add_argument("--target", default="http://127.0.0.1:8000")
@@ -213,11 +262,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-inflight", type=int, default=256)
     p.add_argument("--duration", type=float, default=0, help="stop after seconds, 0 = forever")
     p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--trace", type=Path, help="npz from lab.azure: replay it instead of a model")
     args = p.parse_args(argv)
 
     rng = random.Random(args.seed)
     state = State()
     serve_control(state, args.listen)
+    if args.trace:
+        replay_trace(args, state, rng)
+        time.sleep(args.timeout)  # in flight requests finish and the last metrics get scraped
+        return 0
     start = time.time()
     noise = 0.0  # AR(1) in log space, refreshed once per second
     last_noise = start

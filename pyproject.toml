@@ -22,6 +22,13 @@ anomaly-detection-eval = "anomaly_detection.harness.cli:main"
 anomaly-detection-nab = "anomaly_detection.harness.nab_cli:main"
 anomaly-detection-replay = "anomaly_detection.harness.replay_cli:main"
 
+[project.optional-dependencies]
+# IBM Granite TSPulse (Apache-2.0). granite-tsfm brings transformers, torch, pandas and
+# scikit-learn, so it stays out of the core dependencies. CPU-only torch is enough.
+tspulse = [
+    "granite-tsfm==0.3.12",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",

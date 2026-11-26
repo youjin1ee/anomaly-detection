@@ -40,6 +40,7 @@ Models:
 |---|---|---|
 | `seasonal` | median and MAD of the same time of day (and week) in the past, pooled over neighbouring slots | default; cheap, works after two days of history (defaults tuned on synthetic data), has a band. For bursty series that are idle most of the day, `idle_scale_ratio` stops bursts of a size seen before from alerting |
 | `rcf` | Random Cut Forest ([rrcf](https://github.com/kLabUM/rrcf)) over shingled, normalised values | shape changes that a band does not describe; heavier, no band |
+| `awsrcf` | AWS Random Cut Forest (Java, Apache-2.0) through a Java child process, optional | a forest that scores shape and, in mode `caster`, also gives an expected value and a calibrated band; needs a JVM, see [docs/design.md](docs/design.md#aws-rcf-java-integration) |
 | `static` | fixed lower and upper limit | hard limits, and as a comparison baseline |
 
 New model kinds register with `anomaly_detection.models.register_model(kind, factory)`. A model

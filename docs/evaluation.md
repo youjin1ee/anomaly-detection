@@ -124,6 +124,8 @@ results are never used, and nothing is tuned per file or per category.
 | `seasonal` | `slot_window = clamp(round(2400 s / interval), 1, 8)`, `min_points = min(18, 2 * (2 * slot_window + 1))`, daily and weekly seasonality, everything else default. The pooling keeps its default span of about 40 minutes at 5 minute data and shrinks to one neighbouring slot on 30 minute and hourly data |
 | `rcf` | `norm_window = clamp(round(86400 s / interval), 288, 1440)`, `reference_window = max(6, round(3600 s / interval))`, `sample_size = clamp(probation - 50, 64, 1024)` so that the forest is full and scores from the end of the probationary period, everything else default (shingle 8, 40 trees) |
 | `rcf-time` | `rcf` with time of day and week as extra dimensions |
+| `awsrcf-nab` | not derived from the file: the fixed setting of the AWS entry in the NAB scoreboard (100 trees, sample 256, shingle 1, decay 1e-5, raw score divided by 8). Needs the Java bridge, see `docs/design.md` |
+| `awsrcf`, `awsrcf-trcf`, `awsrcf-grade` | `sample_size` and `reference_window` as in `rcf`, everything else default of `models/awsrcf.py` (shingle 8, 50 trees, mode `caster`, or `trcf` without band). `awsrcf-grade` uses the anomaly grade of the library as score instead of the threshold ratio |
 | `fixed` | lower and upper limit half the range of the probationary period below its minimum and above its maximum. The synthetic comparison (half the minimum, 1.5 times the maximum) breaks on zero and negative values, which NAB has. Score is 1 outside the limits and 0 inside |
 
 The timestamps are read as UTC. A record whose timestamp is not later than the previous one
@@ -148,3 +150,5 @@ anomaly itself and cannot be compared with the synthetic scenarios.
 - NAB scores of other detectors come from their authors and from the NAB README. They are
   shown next to ours for orientation, not as a controlled comparison.
 - The rrcf based `rcf` here is not the AWS implementation that sits in the NAB scoreboard.
+  The `awsrcf-*` models are (run them with `ANOMALY_AWSRCF_HOME` set, see `docs/design.md`);
+  `awsrcf-nab` is the one that reproduces the scoreboard setting.

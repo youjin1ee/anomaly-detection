@@ -18,8 +18,10 @@ import csv
 import gzip
 import hashlib
 import json
+import time
 from collections import Counter
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -126,6 +128,7 @@ class RawOutput:
     score: np.ndarray
     expected: np.ndarray
     error: str = ""  # the model raised; scores stop at that sample
+    seconds: float = 0.0  # wall time of the replay of this series
 
 
 def warmup_scale(values: np.ndarray, warmup_end: int) -> float:
@@ -135,16 +138,13 @@ def warmup_scale(values: np.ndarray, warmup_end: int) -> float:
     return float(np.quantile(seen, 0.99)) if seen.size else 0.0
 
 
-def run_model(spec: ModelSpec, series: RecordedSeries, step: int, warmup_end: int) -> RawOutput:
+def stream_scores(
+    kind: str, params: dict[str, Any], series: RecordedSeries, step: int
+) -> RawOutput:
     """Feed one series to a model, one sample at a time, skipping missing samples."""
-    params = dict(spec.params)
-    if spec.name.split("-")[0] == "fixed" or spec.kind == "static":
-        seen = series.values[:warmup_end]
-        if np.isfinite(seen).sum() < 1440:  # no usable history: a fixed limit cannot be set
-            return RawOutput(np.full(len(series.ts), np.nan), np.full(len(series.ts), np.nan))
-        params = fixed_thresholds(seen, "both")
+    t0 = time.perf_counter()
     seed = int(hashlib.sha1(series.key.encode()).hexdigest()[:3], 16)
-    pipe = SeriesPipeline(create_model(spec.kind, params, float(step), seed=seed))
+    pipe = SeriesPipeline(create_model(kind, params, float(step), seed=seed))
     score = np.full(len(series.ts), np.nan)
     expected = np.full(len(series.ts), np.nan)
     error = ""
@@ -161,27 +161,47 @@ def run_model(spec: ModelSpec, series: RecordedSeries, step: int, warmup_end: in
     close = getattr(pipe._model, "close", None)
     if close is not None:
         close()  # a model that lives outside the process (awsrcf) frees its series
-    return RawOutput(score, expected, error)
+    return RawOutput(score, expected, error, time.perf_counter() - t0)
+
+
+def run_model(spec: ModelSpec, series: RecordedSeries, step: int, warmup_end: int) -> RawOutput:
+    params = dict(spec.params)
+    if spec.name.split("-")[0] == "fixed" or spec.kind == "static":
+        seen = series.values[:warmup_end]
+        if np.isfinite(seen).sum() < 1440:  # no usable history: a fixed limit cannot be set
+            return RawOutput(np.full(len(series.ts), np.nan), np.full(len(series.ts), np.nan))
+        params = fixed_thresholds(seen, "both")
+    return stream_scores(spec.kind, params, series, step)
 
 
 def cache_name(spec: ModelSpec, series: RecordedSeries, step: int, warmup_end: int) -> str:
+    data = hashlib.sha1(np.ascontiguousarray(series.values).tobytes()).hexdigest()[:12]
     ident = json.dumps(
-        [spec.name, spec.kind, spec.params, series.key, step, warmup_end], sort_keys=True
+        [spec.name, spec.kind, spec.params, series.key, step, warmup_end, data], sort_keys=True
     )
     return hashlib.sha1(ident.encode()).hexdigest() + ".npz"
 
 
 def cached_run(
-    spec: ModelSpec, series: RecordedSeries, step: int, warmup_end: int, cache_dir: Path | None
+    spec: ModelSpec,
+    series: RecordedSeries,
+    step: int,
+    warmup_end: int,
+    cache_dir: Path | None,
+    run: Callable[[ModelSpec, RecordedSeries, int, int], RawOutput] = run_model,
 ) -> RawOutput:
+    """`run` replaces the default one-sample-at-a-time replay (for example a batched path)."""
     path = cache_dir / cache_name(spec, series, step, warmup_end) if cache_dir else None
     if path is not None and path.exists():
         with np.load(path) as z:
-            return RawOutput(z["score"], z["expected"], str(z["error"]))
-    out = run_model(spec, series, step, warmup_end)
+            sec = float(z["seconds"]) if "seconds" in z else 0.0
+            return RawOutput(z["score"], z["expected"], str(z["error"]), sec)
+    out = run(spec, series, step, warmup_end)
     if path is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(path, score=out.score, expected=out.expected, error=out.error)
+        np.savez_compressed(
+            path, score=out.score, expected=out.expected, error=out.error, seconds=out.seconds
+        )
     return out
 
 
@@ -226,6 +246,29 @@ def alert_context(values: np.ndarray, first: int, idle_level: float, lookback: i
     return "other_up" if now > before else "other_down"
 
 
+def calibrated_threshold(
+    scores: np.ndarray, start: int, end: int, rule: AlertRule, allowed: float, floor: float = 0.0
+) -> float:
+    """Lowest threshold in [floor, 1] at which `rule` fires at most `allowed` times on
+    scores[start:end] (a period with no labels, so every alert there is a false alarm).
+
+    A false alarm budget of `b` per day over `d` days of calibration gives `allowed = b * d`.
+    Alerts are counted with the real rule (consecutive samples, merged runs), not as exceedances
+    of single samples. A model that scores nothing there gets `floor`."""
+    window = scores[start:end]
+
+    def count(thr: float) -> int:
+        return len(alert_spans(window, replace(rule, threshold=thr)))
+
+    if count(floor) <= allowed:
+        return floor
+    lo, hi = floor, 1.0 + 1e-9  # count(lo) > allowed, count(hi) == 0
+    for _ in range(20):
+        mid = (lo + hi) / 2
+        lo, hi = (lo, mid) if count(mid) <= allowed else (mid, hi)
+    return hi
+
+
 @dataclass
 class SeriesAlerts:
     key: str
@@ -252,10 +295,14 @@ def evaluate_series(
     guards: Guards,
     rule: AlertRule,
     idle_frac: float = 0.01,
+    eval_start: int | None = None,
 ) -> SeriesAlerts:
+    """Alerts after `eval_start` (default: the end of the warmup, which also fixes the scale
+    of the guards and of the idle level)."""
+    start = warmup_end if eval_start is None else eval_start
     scale = warmup_scale(series.values, warmup_end)
     scores = guarded_scores(raw, series.values, guards, scale)
-    after = np.flatnonzero(np.isfinite(series.values[warmup_end:])) + warmup_end
+    after = np.flatnonzero(np.isfinite(series.values[start:])) + start
     days = max((after[-1] - after[0] + 1) * step / 86400, 1.0) if after.size else 1.0
     out = SeriesAlerts(
         series.key,
@@ -263,10 +310,10 @@ def evaluate_series(
         series.labels,
         model,
         days,
-        ready=bool(np.isfinite(scores[warmup_end:]).any()),
+        ready=bool(np.isfinite(scores[start:]).any()),
         error=raw.error,
     )
-    out.spans = alert_spans(scores, rule, warmup_end)
+    out.spans = alert_spans(scores, rule, start)
     idle = idle_frac * scale
     out.contexts = [alert_context(series.values, first, idle) for first, _, _ in out.spans]
     return out

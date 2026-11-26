@@ -191,6 +191,27 @@ def evaluate(
     return rows
 
 
+def render_pooled(rows: list[Row], model_order: list[str], day_seconds: float) -> str:
+    """All scenarios of a model together, false alarms per signal per lab day."""
+    out = [
+        "| model | events | detected | recall | alerts | false alarms | precision | F1 "
+        "| delay median (s) | false alarms per signal per lab day |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for m in model_order:
+        mine = [r.result for r in rows if r.model == m]
+        if not mine:
+            continue
+        s = summarize(mine)
+        out.append(
+            f"| {m} | {s.events} | {s.detected} | {_f(s.recall)} | {s.alerts} "
+            f"| {s.false_alarms} | {_f(s.precision)} | {_f(s.f1)} "
+            f"| {_f(s.median_delay_min * 60, 0)} "
+            f"| {_f(s.false_alarms / (s.eval_days * 86400 / day_seconds))} |"
+        )
+    return "\n".join(out) + "\n"
+
+
 def effect_sizes(
     signals: dict[str, tuple[np.ndarray, np.ndarray]],
     events: list[dict],
@@ -288,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
         f"warm-up {meta['warmup_days']} days, step {args.step}s, alert rule: score >= "
         f"{args.threshold} for {args.for_points} consecutive samples.\n\n"
         + render(rows, order, meta["day_seconds"])
+        + "\nAll scenarios together:\n\n"
+        + render_pooled(rows, order, meta["day_seconds"])
         + "\nEffect of the injection on its own signal (during, from 60 s after the start, "
         "divided by the 180 s before):\n\n" + render_effects(effect_sizes(signals, events))
     )

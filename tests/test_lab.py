@@ -215,6 +215,8 @@ def test_replay_detects_a_labelled_drop_with_the_seasonal_model(tmp_path):
     assert by["seasonal"].result.false_alarms == 0
     assert by["seasonal"].result.delays[0] <= 60  # seconds in lab time
     text = replay.render(rows, ["fixed", "seasonal"], 1440)
+    pooled = replay.render_pooled(rows, ["fixed", "seasonal"], 1440)
+    assert "| seasonal | 1 | 1 | 1.00 |" in pooled
     assert "request_drop" in text and "seasonal" in text
 
 

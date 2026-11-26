@@ -149,6 +149,8 @@ class AwsRcfModel:
     threshold_width    modes trcf and caster: score is 0.5 at the threshold and
                        `1 / (1 + exp(-(raw / threshold - 1) / threshold_width))` otherwise
                        (default 0.25)
+    score_from         modes trcf and caster: `ratio` (above) or `grade`, the anomaly grade of
+                       the library itself, 0 for a normal sample and up to 1 (default ratio)
     reference_window   samples of the trailing median used as `expected` when the library
                        gives none (default 60)
     """
@@ -166,6 +168,7 @@ class AwsRcfModel:
         "error_horizon",
         "score_div",
         "threshold_width",
+        "score_from",
         "reference_window",
     }
 
@@ -184,13 +187,17 @@ class AwsRcfModel:
         error_horizon: int | None = None,
         score_div: float | None = None,
         threshold_width: float = 0.25,
+        score_from: str = "ratio",
         reference_window: int = 60,
     ):
         if mode not in ("rcf", "trcf", "caster"):
             raise ValueError("mode must be rcf, trcf or caster")
         if calibration not in ("none", "minimal", "simple"):
             raise ValueError("calibration must be none, minimal or simple")
+        if score_from not in ("ratio", "grade"):
+            raise ValueError("score_from must be ratio or grade")
         self._mode = mode
+        self._from = score_from
         self._div = score_div if score_div else math.log2(sample_size)
         self._width = threshold_width
         self._recent: deque[float] = deque(maxlen=reference_window)
@@ -232,6 +239,8 @@ class AwsRcfModel:
         self.grade = grade
         if self._mode == "rcf":
             score = min(1.0, max(0.0, raw / self._div))
+        elif self._from == "grade":
+            score = min(1.0, max(0.0, grade))
         else:
             ref = max(thr, 1e-6)
             score = logistic((raw / ref - 1.0) / self._width)

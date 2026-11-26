@@ -31,6 +31,8 @@ def test_unknown_parameter_and_mode_are_rejected():
         create_model("awsrcf", {"bogus": 1}, 60)
     with pytest.raises(ValueError, match="mode"):
         awsrcf_mod.AwsRcfModel(mode="nope")
+    with pytest.raises(ValueError, match="score_from"):
+        awsrcf_mod.AwsRcfModel(score_from="nope")
 
 
 def test_nab_parameter_rule():
@@ -40,6 +42,9 @@ def test_nab_parameter_rule():
     assert official["shingle_size"] == 1 and official["score_div"] == 8.0
     ours = model_params("awsrcf", 300.0, 4000)
     assert ours["mode"] == "caster" and ours["sample_size"] == 550
+    assert ours["score_from"] == "ratio"
+    assert model_params("awsrcf-grade", 300.0, 4000)["score_from"] == "grade"
+    assert model_params("awsrcf-trcf", 300.0, 4000)["mode"] == "trcf"
 
 
 def _series(n, spike_at=None):
@@ -84,3 +89,12 @@ def test_one_jvm_serves_many_series_independently():
         a.update(t, v)
     assert b.update(0.0, 100.0) is None  # b has seen one sample only
     assert a._bridge is b._bridge
+
+
+@needs_jvm
+def test_grade_score_is_zero_on_normal_data_and_positive_on_a_spike():
+    m = create_model("awsrcf", {"mode": "caster", "score_from": "grade"}, 300)
+    outs = [(t, v, m.update(t, v)) for t, v in _series(1200, spike_at=1000)]
+    scored = [(t, o.score) for t, v, o in outs if o is not None]
+    assert all(0.0 <= s <= 1.0 for _, s in scored)
+    assert max(s for t, s in scored if t >= 1000 * 300.0) > 0.0

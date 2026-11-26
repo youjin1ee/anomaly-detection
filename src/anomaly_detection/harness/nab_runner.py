@@ -27,7 +27,7 @@ from .nab_score import probation_length
 
 NAB_MODELS = ("fixed", "seasonal", "rcf", "rcf-time")
 # Models that need the optional Java bridge (see models/awsrcf.py). Not in the default run.
-NAB_AWSRCF_MODELS = ("awsrcf-nab", "awsrcf-trcf", "awsrcf")
+NAB_AWSRCF_MODELS = ("awsrcf-nab", "awsrcf-trcf", "awsrcf", "awsrcf-grade")
 NAB_ALL_MODELS = NAB_MODELS + NAB_AWSRCF_MODELS
 PROBE_RECORDS = 100
 POOL_SECONDS = 2400.0  # pooling half width of the seasonal model at the default 5 minute data
@@ -73,10 +73,12 @@ def model_params(name: str, interval: float, n_records: int) -> dict[str, Any]:
             "time_decay": 1e-5,
             "score_div": 8.0,
         }
-    if name in ("awsrcf", "awsrcf-trcf"):
+    if name in ("awsrcf", "awsrcf-trcf", "awsrcf-grade"):
         probation = probation_length(n_records)
         return {
-            "mode": "caster" if name == "awsrcf" else "trcf",
+            "mode": "trcf" if name == "awsrcf-trcf" else "caster",
+            # awsrcf-grade scores with the anomaly grade of the library instead of the ratio
+            "score_from": "grade" if name == "awsrcf-grade" else "ratio",
             # same rule as rcf: the forest is full at the end of the probationary period
             "sample_size": int(min(1024, max(64, probation - 50))),
             "reference_window": int(max(6, round(3600.0 / interval))),

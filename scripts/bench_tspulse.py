@@ -37,7 +37,7 @@ def main() -> None:
 
     base_rss = rss_mb()
     t0 = time.perf_counter()
-    import torch  # noqa: F401
+    import torch
 
     t_import = time.perf_counter() - t0
     from anomaly_detection.models.tspulse import TSPulseModel, get_engine, update_many

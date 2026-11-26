@@ -68,7 +68,8 @@ class TSPulseEngine:
             from tsfm_public.models.tspulse.utils.helpers import patchwise_stitched_reconstruction
         except ImportError as exc:  # pragma: no cover - depends on the environment
             raise ImportError(
-                "the tspulse model needs the optional dependencies: pip install 'anomaly-detection[tspulse]'"
+                "the tspulse model needs the optional dependencies: "
+                "pip install 'anomaly-detection[tspulse]'"
             ) from exc
         self._torch = torch
         self._stitch = patchwise_stitched_reconstruction
@@ -109,7 +110,9 @@ class TSPulseEngine:
                 reconstruct_end=length,
             )
             tail = slice(length - aggregation_length, length)
-            err_time = ((x[:, tail, 0] - stitched["reconstruction_outputs"][:, tail, 0]) ** 2).mean(1)
+            err_time = ((x[:, tail, 0] - stitched["reconstruction_outputs"][:, tail, 0]) ** 2).mean(
+                1
+            )
             err_fft = (
                 (x[:, tail, 0] - stitched["reconstructed_ts_from_fft"][:, tail, 0]) ** 2
             ).mean(1)
@@ -221,7 +224,9 @@ class TSPulseModel:
         self._band_k = band_k
         self._min_ratio = min_scale_ratio
         self._window: deque[float] = deque(maxlen=self._ctx)
-        self._scales = {h: _HeadScale(history, min_history, score_ref_quantile, score_mid) for h in HEADS}
+        self._scales = {
+            h: _HeadScale(history, min_history, score_ref_quantile, score_mid) for h in HEADS
+        }
         self._residuals: deque[float] = deque(maxlen=residual_window)
         self._min_resid = min_history
         # forecast made at the previous sample: (value, scale of that window)
@@ -276,7 +281,8 @@ class TSPulseModel:
         if expected is None or sigma is None or any(s is None for s in chosen):
             return None
         half = self._band_k * max(sigma, 1e-6) * prev_scale
-        return ModelOutput(max(chosen), expected, expected - half, expected + half)  # type: ignore[type-var]
+        top = max(s for s in chosen if s is not None)
+        return ModelOutput(top, expected, expected - half, expected + half)
 
     # -- public paths ----------------------------------------------------------------------
 
@@ -325,9 +331,7 @@ class TSPulseModel:
         return outs, heads
 
 
-def update_many(
-    models: list[TSPulseModel], values: list[float]
-) -> list[ModelOutput | None]:
+def update_many(models: list[TSPulseModel], values: list[float]) -> list[ModelOutput | None]:
     """One step for many series with a single forward pass (all series of one engine).
 
     This is what a sidecar with hundreds of series per interval should call."""
@@ -340,7 +344,8 @@ def update_many(
         return outs
     fc, et, ef = engine.infer(np.stack([preps[i][0] for i in ready]), agg)  # type: ignore[index]
     for j, i in enumerate(ready):
-        outs[i] = models[i]._finish(preps[i][1], float(fc[j]), float(et[j]), float(ef[j]))  # type: ignore[index]
+        pending = preps[i][1]  # type: ignore[index]
+        outs[i] = models[i]._finish(pending, float(fc[j]), float(et[j]), float(ef[j]))
     return outs
 
 

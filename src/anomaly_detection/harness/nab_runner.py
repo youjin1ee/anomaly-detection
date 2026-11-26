@@ -103,7 +103,8 @@ def score_series_tspulse(
     from ..models.tspulse import TSPulseModel
 
     model = TSPulseModel(
-        model_path=os.environ.get("TSPULSE_MODEL_DIR") or "ibm-granite/granite-timeseries-tspulse-r1",
+        model_path=os.environ.get("TSPULSE_MODEL_DIR")
+        or "ibm-granite/granite-timeseries-tspulse-r1",
         threads=int(os.environ.get("TSPULSE_THREADS", "1")),
     )
     idx = accepted_records(series)

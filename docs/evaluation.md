@@ -124,6 +124,7 @@ results are never used, and nothing is tuned per file or per category.
 | `seasonal` | `slot_window = clamp(round(2400 s / interval), 1, 8)`, `min_points = min(18, 2 * (2 * slot_window + 1))`, daily and weekly seasonality, everything else default. The pooling keeps its default span of about 40 minutes at 5 minute data and shrinks to one neighbouring slot on 30 minute and hourly data |
 | `rcf` | `norm_window = clamp(round(86400 s / interval), 288, 1440)`, `reference_window = max(6, round(3600 s / interval))`, `sample_size = clamp(probation - 50, 64, 1024)` so that the forest is full and scores from the end of the probationary period, everything else default (shingle 8, 40 trees) |
 | `rcf-time` | `rcf` with time of day and week as extra dimensions |
+| `tspulse` | no per-file parameter. 512 sample context, 32 sample scoring window, three heads, defaults of the model. The first score appears at record 563 of each file, whatever the probationary length is |
 | `fixed` | lower and upper limit half the range of the probationary period below its minimum and above its maximum. The synthetic comparison (half the minimum, 1.5 times the maximum) breaks on zero and negative values, which NAB has. Score is 1 outside the limits and 0 inside |
 
 The timestamps are read as UTC. A record whose timestamp is not later than the previous one

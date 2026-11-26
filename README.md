@@ -40,6 +40,7 @@ Models:
 |---|---|---|
 | `seasonal` | median and MAD of the same time of day (and week) in the past, pooled over neighbouring slots | default; cheap, works after two days of history (defaults tuned on synthetic data), has a band. For bursty series that are idle most of the day, `idle_scale_ratio` stops bursts of a size seen before from alerting |
 | `rcf` | Random Cut Forest ([rrcf](https://github.com/kLabUM/rrcf)) over shingled, normalised values | shape changes that a band does not describe; heavier, no band |
+| `tspulse` | IBM Granite TSPulse (1M parameters, zero-shot, Apache-2.0): three heads (time, fft, one step forecast), each scaled against its own history, maximum taken; band from forecast residuals | experimental. Needs the `tspulse` extra and the model files; 512 samples of context plus about 50 samples of history before the first score; CPU only |
 | `static` | fixed lower and upper limit | hard limits, and as a comparison baseline |
 
 New model kinds register with `anomaly_detection.models.register_model(kind, factory)`. A model

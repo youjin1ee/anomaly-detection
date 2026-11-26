@@ -125,9 +125,7 @@ def test_head_subset_changes_score_source():
     only_time, heads = make(heads=("time",)).score_offline(v)
     i = 305
     assert full[i] is not None and only_time[i] is not None
-    assert full[i].score == pytest.approx(
-        max(heads[h][i] for h in ("time", "fft", "pred"))
-    )
+    assert full[i].score == pytest.approx(max(heads[h][i] for h in ("time", "fft", "pred")))
     assert only_time[i].score == pytest.approx(heads["time"][i])
 
 

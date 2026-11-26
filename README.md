@@ -229,6 +229,18 @@ uv run anomaly-detection-replay dumps/ --models fixed,seasonal,rcf --warmup-days
     --workers 4 --cache-dir .replay-cache --json alerts.json
 ```
 
+`anomaly-detection-boom` does the same replay on the [Datadog BOOM](https://huggingface.co/datasets/Datadog/BOOM)
+observability metrics (Apache-2.0), one univariate series per variate, and adds per resolution,
+domain and metric type breakdowns, simultaneous alerts and an experiment that calibrates a
+per series threshold to a false alarm budget. Method and numbers:
+[docs/results/m4-boom.md](docs/results/m4-boom.md). The data stays outside the repository
+(`pip install 'anomaly-detection[boom]'` for the arrow reader).
+
+```sh
+uv run anomaly-detection-boom /path/to/boom --cache-dir cache --out-dir out --tag subset \
+    --max-days 14 --subset 20,40 --models fixed,seasonal,rcf,tspulse --workers 4
+```
+
 For data with real noise, [`examples/inject-lab`](examples/inject-lab) runs a serving engine
 under a compressed-day load, injects the same kind of silent failures with ground truth
 labels, and replays the dump through the same models (`python -m anomaly_detection.lab.replay`).

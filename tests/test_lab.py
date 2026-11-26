@@ -241,3 +241,26 @@ def test_lab_example_config_uses_the_signal_queries_and_the_lab_day():
         assert d.model.params["seasonality"] == [1440]
     for name in ("compose.yaml", "scrape.yml"):
         assert yaml.safe_load((root / name).read_text())
+
+
+def test_replay_reads_live_sidecar_scores_from_the_raw_dump(tmp_path):
+    sig, labels = _lab_signals(tmp_path, drop=True)
+    meta, events = replay.load_labels(labels)
+    signals = replay.load_signals(sig, 5)
+    ts, _ = signals["request_rate"]
+    ev = events[0]
+    raw = tmp_path / "raw.csv"
+    with raw.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "labels", "value"])
+        for t in ts[ts >= meta["eval_start"]]:
+            hot = ev["actual_start"] + 10 <= t < ev["actual_end"]
+            lab = '__name__="anomaly_score",detector="request_rate",job="detector"'
+            w.writerow([t + 0.3, lab, 0.9 if hot else 0.1])
+            w.writerow([t, '__name__="vllm:other",job="x"', 1])
+    live = replay.load_live_scores(raw, 5)
+    assert set(live) == {"request_rate"}
+    rows = replay.evaluate(signals, meta, events, [], 5, replay.AlertRule(), None, live)
+    (row,) = rows
+    assert row.model == "sidecar-live" and row.result.detected == 1
+    assert row.result.false_alarms == 0

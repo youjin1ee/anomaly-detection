@@ -16,6 +16,7 @@ import argparse
 import csv
 import json
 import math
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +55,21 @@ def load_signals(path: Path, step: int) -> dict[str, tuple[np.ndarray, np.ndarra
         for k, v in points.items():
             vals[k - lo] = v
         out[name] = (ts, vals)
+    return out
+
+
+def load_live_scores(path: Path, step: int) -> dict[str, dict[int, float]]:
+    """anomaly_score of the sidecar that ran during the lab: detector -> {grid index: score}.
+
+    Taken from raw.csv. Scrape times are rounded to the step grid; the last value in a cell wins.
+    """
+    out: dict[str, dict[int, float]] = defaultdict(dict)
+    with path.open() as f:
+        for row in csv.DictReader(f):
+            if not row["labels"].startswith('__name__="anomaly_score"'):
+                continue
+            lab = dict(re.findall(r'(\w+)="([^"]*)"', row["labels"]))
+            out[lab["detector"]][round(float(row["timestamp"]) / step)] = float(row["value"])
     return out
 
 
@@ -127,7 +143,19 @@ class Row:
     scenario: str
     result: CaseResult
     cross_alarms: int  # false alarms that fired during another scenario's event
-    quiet_alarms: int
+
+
+def _row(
+    model: str, name: str, run: SignalRun, scores: np.ndarray, step: int, rule: AlertRule
+) -> Row:
+    res = evaluate_case(scores, run.case.anomalies, run.case.eval_start, step, rule)
+    matched = {f for f in res.fires for s, e in run.own if s <= f <= e + rule.grace}
+    cross = sum(
+        1
+        for f in res.fires
+        if f not in matched and any(s <= f <= e + rule.grace for s, e in run.others)
+    )
+    return Row(model, name, run.case.scenario, res, cross)
 
 
 def evaluate(
@@ -138,6 +166,7 @@ def evaluate(
     step: int,
     rule: AlertRule,
     only: list[str] | None = None,
+    live: dict[str, dict[int, float]] | None = None,
 ) -> list[Row]:
     scale = DAY / meta["day_seconds"]
     rows: list[Row] = []
@@ -149,16 +178,14 @@ def evaluate(
             spec = parse_model(m)
             params = {**MODEL_PARAMS.get(spec.kind, {}), **spec.params}
             scores = score(spec.name, spec.kind, params, run, step, scale)
-            res = evaluate_case(scores, run.case.anomalies, run.case.eval_start, step, rule)
-            matched = {f for f in res.fires for s, e in run.own if s <= f <= e + rule.grace}
-            cross = sum(
-                1
-                for f in res.fires
-                if f not in matched and any(s <= f <= e + rule.grace for s, e in run.others)
-            )
-            rows.append(
-                Row(spec.name, name, run.case.scenario, res, cross, res.false_alarms - cross)
-            )
+            rows.append(_row(spec.name, name, run, scores, step, rule))
+        if live and name in live:
+            scores = np.full(len(ts), np.nan)
+            first = round(ts[0] / step)
+            for k, v in live[name].items():
+                if 0 <= k - first < len(ts):
+                    scores[k - first] = v
+            rows.append(_row("sidecar-live", name, run, scores, step, rule))
     return rows
 
 
@@ -194,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--step", type=int, default=5, help="seconds between samples in the dump")
     p.add_argument("--threshold", type=float, default=0.5)
     p.add_argument("--for-points", type=int, default=3)
+    p.add_argument("--raw", type=Path, help="raw.csv: adds the live scores of the sidecar")
     p.add_argument("--only", default="", help="comma separated signal names")
     p.add_argument("--out", type=Path)
     p.add_argument("--json", type=Path)
@@ -203,10 +231,18 @@ def main(argv: list[str] | None = None) -> int:
     signals = load_signals(args.signals, args.step)
     models = [m for m in args.models.split(",") if m]
     rule = AlertRule(threshold=args.threshold, for_points=args.for_points)
+    live = load_live_scores(args.raw, args.step) if args.raw else None
     rows = evaluate(
-        signals, meta, events, models, args.step, rule, [s for s in args.only.split(",") if s]
+        signals,
+        meta,
+        events,
+        models,
+        args.step,
+        rule,
+        [s for s in args.only.split(",") if s],
+        live,
     )
-    order = [parse_model(m).name for m in models]
+    order = [parse_model(m).name for m in models] + (["sidecar-live"] if live else [])
     text = (
         f"Completed events: {len(events)}. Lab day: {meta['day_seconds']:.0f}s, "
         f"warm-up {meta['warmup_days']} days, step {args.step}s, alert rule: score >= "

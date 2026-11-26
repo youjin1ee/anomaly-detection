@@ -19,6 +19,7 @@ dependencies = [
 [project.scripts]
 anomaly-detection = "anomaly_detection.cli:main"
 anomaly-detection-eval = "anomaly_detection.harness.cli:main"
+anomaly-detection-nab = "anomaly_detection.harness.nab_cli:main"
 
 [dependency-groups]
 dev = [

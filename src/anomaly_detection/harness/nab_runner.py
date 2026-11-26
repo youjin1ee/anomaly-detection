@@ -11,6 +11,7 @@ or results.
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import time
 from collections import defaultdict
 from collections.abc import Sequence
@@ -26,6 +27,9 @@ from .nab_data import NabSeries
 from .nab_score import probation_length
 
 NAB_MODELS = ("fixed", "seasonal", "rcf", "rcf-time")
+TSPULSE_MODELS = ("tspulse", "tspulse-time", "tspulse-fft", "tspulse-pred")
+# One tspulse run gives the head ensemble and, for the comparison of heads, each head alone.
+ALL_NAB_MODELS = (*NAB_MODELS, "tspulse")  # names `run` accepts
 PROBE_RECORDS = 100
 POOL_SECONDS = 2400.0  # pooling half width of the seasonal model at the default 5 minute data
 
@@ -46,6 +50,10 @@ def model_params(name: str, interval: float, n_records: int) -> dict[str, Any]:
         # kept for other resolutions, but never less than one slot on each side.
         w = int(max(1, min(8, round(POOL_SECONDS / interval))))
         return {"slot_window": w, "min_points": min(18, 2 * (2 * w + 1))}
+    if name == "tspulse":
+        # Nothing depends on the file: the model has a fixed 512 point context, scores from
+        # its own history and has no per-file parameter.
+        return {}
     if name in ("rcf", "rcf-time"):
         probation = probation_length(n_records)
         params: dict[str, Any] = {
@@ -68,6 +76,46 @@ def fixed_limits(values: np.ndarray, probation: int) -> dict[str, float]:
     lo, hi = float(seen.min()), float(seen.max())
     margin = 0.5 * (hi - lo)
     return {"lower": lo - margin, "upper": hi + margin}
+
+
+def accepted_records(series: NabSeries) -> np.ndarray:
+    """Indices of the records the pipeline would feed to a model: finite values and a
+    timestamp later than the last accepted one (NAB has a few duplicates and one backward
+    step)."""
+    keep: list[int] = []
+    last = float("-inf")
+    for i in range(len(series.values)):
+        if not np.isfinite(series.values[i]):
+            continue
+        t = float(series.timestamps[i])
+        if t <= last:
+            continue
+        last = t
+        keep.append(i)
+    return np.asarray(keep, dtype=int)
+
+
+def score_series_tspulse(
+    series: NabSeries, batch_size: int = 64
+) -> tuple[dict[str, np.ndarray], float]:
+    """TSPulse with batched inference over the whole file (same result as streaming, see
+    tests). Returns the scores of the head ensemble and of every head alone."""
+    from ..models.tspulse import TSPulseModel
+
+    model = TSPulseModel(
+        model_path=os.environ.get("TSPULSE_MODEL_DIR") or "ibm-granite/granite-timeseries-tspulse-r1",
+        threads=int(os.environ.get("TSPULSE_THREADS", "1")),
+    )
+    idx = accepted_records(series)
+    t0 = time.perf_counter()
+    outs, heads = model.score_offline(series.values[idx], batch_size=batch_size)
+    us = (time.perf_counter() - t0) / max(len(idx), 1) * 1e6
+    n = len(series.values)
+    result = {m: np.full(n, np.nan) for m in TSPULSE_MODELS}
+    result["tspulse"][idx] = [np.nan if o is None else o.score for o in outs]
+    for h in ("time", "fft", "pred"):
+        result[f"tspulse-{h}"][idx] = heads[h]
+    return result, us
 
 
 def score_series(name: str, series: NabSeries, seed: int = 0) -> tuple[np.ndarray, float]:
@@ -102,10 +150,13 @@ def _init_worker(mem_limit_gb: float) -> None:
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 
 
-def _run(job: tuple[str, NabSeries, int]) -> tuple[str, str, np.ndarray, float]:
+def _run(job: tuple[str, NabSeries, int]) -> list[tuple[str, str, np.ndarray, float]]:
     name, series, seed = job
+    if name == "tspulse":
+        by_name, us = score_series_tspulse(series)
+        return [(m, series.path, sc, us) for m, sc in by_name.items()]
     scores, us = score_series(name, series, seed)
-    return name, series.path, scores, us
+    return [(name, series.path, scores, us)]
 
 
 @dataclass
@@ -123,15 +174,19 @@ def run_models(
 ) -> dict[str, ModelScores]:
     jobs = [(name, s, seed) for name in names for s in corpus]
     # Biggest, slowest jobs first so the pool is busy until the end.
-    jobs.sort(key=lambda j: (not j[0].startswith("rcf"), -len(j[1].values)))
+    jobs.sort(key=lambda j: (not j[0].startswith(("rcf", "tspulse")), -len(j[1].values)))
     out = {name: ModelScores({}, {}) for name in names}
+    if "tspulse" in names:
+        for m in TSPULSE_MODELS:
+            out.setdefault(m, ModelScores({}, {}))
     ctx = mp.get_context("spawn")
     with ctx.Pool(
         workers, initializer=_init_worker, initargs=(mem_limit_gb,), maxtasksperchild=4
     ) as pool:
-        for name, path, scores, us in pool.imap_unordered(_run, jobs, chunksize=1):
-            out[name].scores[path] = scores
-            out[name].us_per_record[path] = us
+        for rows in pool.imap_unordered(_run, jobs, chunksize=1):
+            for name, path, scores, us in rows:
+                out[name].scores[path] = scores
+                out[name].us_per_record[path] = us
     return out
 
 

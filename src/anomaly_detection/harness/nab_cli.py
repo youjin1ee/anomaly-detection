@@ -14,7 +14,7 @@ import numpy as np
 from .metrics import AlertRule
 from .nab_data import NAB_ARCHIVE_URL, fetch_nab, load_corpus
 from .nab_report import render, render_seeds
-from .nab_runner import NAB_MODELS, hold_for, run_models
+from .nab_runner import ALL_NAB_MODELS, NAB_MODELS, hold_for, run_models
 from .nab_verify import render as render_verify
 from .nab_verify import verify
 
@@ -35,8 +35,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     corpus = load_corpus(args.nab_dir)
     names = [m for m in args.models.split(",") if m]
     for m in names:
-        if m not in NAB_MODELS:
-            raise SystemExit(f"unknown model {m!r}; known: {', '.join(NAB_MODELS)}")
+        if m not in ALL_NAB_MODELS:
+            raise SystemExit(f"unknown model {m!r}; known: {', '.join(ALL_NAB_MODELS)}")
     args.scores_dir.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     results = run_models(names, corpus, args.workers, args.seed, args.mem_limit_gb)

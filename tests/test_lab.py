@@ -264,3 +264,12 @@ def test_replay_reads_live_sidecar_scores_from_the_raw_dump(tmp_path):
     (row,) = rows
     assert row.model == "sidecar-live" and row.result.detected == 1
     assert row.result.false_alarms == 0
+
+
+def test_effect_sizes_compare_the_event_with_the_time_before_it(tmp_path):
+    sig, labels = _lab_signals(tmp_path, drop=True)
+    _, events = replay.load_labels(labels)
+    effects = replay.effect_sizes(replay.load_signals(sig, 5), events)
+    (ratio,) = effects["request_drop"]
+    assert ratio < 0.1
+    assert "request_drop" in replay.render_effects(effects)

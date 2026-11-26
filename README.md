@@ -201,6 +201,10 @@ the numbers of the latest run in [docs/results/](docs/results/).
 uv run anomaly-detection-eval --models fixed,seasonal,rcf --variants 20 --workers 8
 ```
 
+For data with real noise, [`examples/inject-lab`](examples/inject-lab) runs a serving engine
+under a compressed-day load, injects the same kind of silent failures with ground truth
+labels, and replays the dump through the same models (`anomaly-detection-replay`).
+
 ## Limitations
 
 - Models learn from what they see. A failure that lasts long enough becomes the new normal;

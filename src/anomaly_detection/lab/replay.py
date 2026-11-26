@@ -189,6 +189,44 @@ def evaluate(
     return rows
 
 
+def effect_sizes(
+    signals: dict[str, tuple[np.ndarray, np.ndarray]],
+    events: list[dict],
+    settle: float = 60.0,
+    before: float = 180.0,
+) -> dict[str, list[float]]:
+    """Per scenario, for every event: median of its own signal from `settle` seconds after
+    the start to the end, divided by the median of the `before` seconds ahead of the start.
+    This says whether an injection moved the signal at all, whatever a model makes of it."""
+    own = {s.scenario: s.name for s in SIGNALS}
+    out: dict[str, list[float]] = defaultdict(list)
+    for e in events:
+        name = own[e["scenario"]]
+        if name not in signals:
+            continue
+        ts, vals = signals[name]
+        s, t_end = e["actual_start"], e["actual_end"]
+        inside = vals[(ts >= s + settle) & (ts <= t_end) & np.isfinite(vals)]
+        ahead = vals[(ts >= s - before) & (ts < s) & np.isfinite(vals)]
+        if len(inside) and len(ahead) and np.median(ahead) != 0:
+            out[e["scenario"]].append(float(np.median(inside) / np.median(ahead)))
+    return out
+
+
+def render_effects(effects: dict[str, list[float]]) -> str:
+    out = [
+        "| scenario | signal | events | ratio median | ratio min | ratio max |",
+        "|---|---|---|---|---|---|",
+    ]
+    names = {s.scenario: s.name for s in SIGNALS}
+    for sc in sorted(effects):
+        r = effects[sc]
+        out.append(
+            f"| {sc} | {names[sc]} | {len(r)} | {np.median(r):.2f} | {min(r):.2f} | {max(r):.2f} |"
+        )
+    return "\n".join(out) + "\n"
+
+
 def _f(x: float, nd: int = 2) -> str:
     return "n/a" if x != x else f"{x:.{nd}f}"
 
@@ -248,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
         f"warm-up {meta['warmup_days']} days, step {args.step}s, alert rule: score >= "
         f"{args.threshold} for {args.for_points} consecutive samples.\n\n"
         + render(rows, order, meta["day_seconds"])
+        + "\nEffect of the injection on its own signal (during, from 60 s after the start, "
+        "divided by the 180 s before):\n\n" + render_effects(effect_sizes(signals, events))
     )
     print(text)
     if args.out:

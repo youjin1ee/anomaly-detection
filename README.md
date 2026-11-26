@@ -204,6 +204,7 @@ uv run anomaly-detection-eval --models fixed,seasonal,rcf --variants 20 --worker
 For data with real noise, [`examples/inject-lab`](examples/inject-lab) runs a serving engine
 under a compressed-day load, injects the same kind of silent failures with ground truth
 labels, and replays the dump through the same models (`anomaly-detection-replay`).
+Results of the first run: [docs/results/m2-inject-lab.md](docs/results/m2-inject-lab.md).
 
 ## Limitations
 

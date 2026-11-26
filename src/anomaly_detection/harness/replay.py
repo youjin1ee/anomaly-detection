@@ -125,6 +125,7 @@ class RawOutput:
 
     score: np.ndarray
     expected: np.ndarray
+    error: str = ""  # the model raised; scores stop at that sample
 
 
 def warmup_scale(values: np.ndarray, warmup_end: int) -> float:
@@ -142,17 +143,22 @@ def run_model(spec: ModelSpec, series: RecordedSeries, step: int, warmup_end: in
         if np.isfinite(seen).sum() < 1440:  # no usable history: a fixed limit cannot be set
             return RawOutput(np.full(len(series.ts), np.nan), np.full(len(series.ts), np.nan))
         params = fixed_thresholds(seen, "both")
-    seed = int(hashlib.sha1(series.key.encode()).hexdigest()[:6], 16)
+    seed = int(hashlib.sha1(series.key.encode()).hexdigest()[:3], 16)
     pipe = SeriesPipeline(create_model(spec.kind, params, float(step), seed=seed))
     score = np.full(len(series.ts), np.nan)
     expected = np.full(len(series.ts), np.nan)
+    error = ""
     for i, (t, v) in enumerate(zip(series.ts, series.values, strict=True)):
         if np.isnan(v):
             continue
-        res = pipe.update(float(t), float(v))
+        try:
+            res = pipe.update(float(t), float(v))
+        except Exception as exc:  # a model that breaks on one series must not stop the replay
+            error = f"{type(exc).__name__} at sample {i}"
+            break
         if res is not None:
             score[i], expected[i] = res.score, res.expected
-    return RawOutput(score, expected)
+    return RawOutput(score, expected, error)
 
 
 def cache_name(spec: ModelSpec, series: RecordedSeries, step: int, warmup_end: int) -> str:
@@ -168,11 +174,11 @@ def cached_run(
     path = cache_dir / cache_name(spec, series, step, warmup_end) if cache_dir else None
     if path is not None and path.exists():
         with np.load(path) as z:
-            return RawOutput(z["score"], z["expected"])
+            return RawOutput(z["score"], z["expected"], str(z["error"]))
     out = run_model(spec, series, step, warmup_end)
     if path is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(path, score=out.score, expected=out.expected)
+        np.savez_compressed(path, score=out.score, expected=out.expected, error=out.error)
     return out
 
 
@@ -228,6 +234,7 @@ class SeriesAlerts:
     spans: list[tuple[int, int, int]] = field(default_factory=list)  # first, fire, last index
     contexts: list[str] = field(default_factory=list)
     ready: bool = True  # the model produced at least one score after warmup
+    error: str = ""  # the model raised on this series
 
     @property
     def per_day(self) -> float:
@@ -255,6 +262,7 @@ def evaluate_series(
         model,
         days,
         ready=bool(np.isfinite(scores[warmup_end:]).any()),
+        error=raw.error,
     )
     out.spans = alert_spans(scores, rule, warmup_end)
     idle = idle_frac * scale
@@ -272,6 +280,7 @@ def summarize_model(rows: list[SeriesAlerts], limit: float = 0.1) -> dict[str, A
     return {
         "series": len(rows),
         "series_scored": len(ready),
+        "series_failed": sum(1 for r in rows if r.error),
         "alerts": total,
         "alerts_per_series_day": total / days if days else float("nan"),
         "median_per_day": float(np.median(per_day)) if per_day.size else float("nan"),

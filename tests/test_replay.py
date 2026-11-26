@@ -125,3 +125,17 @@ def test_evaluate_counts_alerts_after_warmup_only():
     assert res.ready
     summary = summarize_model([res])
     assert summary["alerts"] == 1 and summary["series_over_limit"] == 1
+
+
+def test_model_error_is_recorded_not_raised(monkeypatch):
+    class Boom:
+        def update(self, ts, value):
+            if ts > 100:
+                raise RecursionError
+            return None
+
+    monkeypatch.setattr("anomaly_detection.harness.replay.create_model", lambda *a, **k: Boom())
+    raw = run_model(parse_model("seasonal"), _series(np.ones(10)), 60, 0)
+    assert raw.error == "RecursionError at sample 2"
+    res = evaluate_series(_series(np.ones(10)), raw, "seasonal", 60, 0, Guards(), AlertRule())
+    assert res.error and summarize_model([res])["series_failed"] == 1

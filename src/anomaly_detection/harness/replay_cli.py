@@ -49,13 +49,15 @@ def run_models(
 
 def render(summaries: dict[tuple[str, str], dict], limit: float) -> str:
     head = (
-        "| model | guards | series | scored | alerts | per series per day | median | p90 | max "
+        "| model | guards | series | scored | failed | alerts | per series per day "
+        "| median | p90 | max "
         f"| series over {limit}/day | " + " | ".join(CONTEXTS) + " |"
     )
-    lines = [head, "|" + "---|" * (10 + len(CONTEXTS))]
+    lines = [head, "|" + "---|" * (11 + len(CONTEXTS))]
     for (model, guard), s in summaries.items():
         lines.append(
-            f"| {model} | {guard} | {s['series']} | {s['series_scored']} | {s['alerts']} | "
+            f"| {model} | {guard} | {s['series']} | {s['series_scored']} | {s['series_failed']} | "
+            f"{s['alerts']} | "
             f"{s['alerts_per_series_day']:.3f} | {s['median_per_day']:.3f} | "
             f"{s['p90_per_day']:.3f} | {s['max_per_day']:.2f} | {s['series_over_limit']} | "
             + " | ".join(str(s["contexts"][c]) for c in CONTEXTS)
@@ -115,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
                     "labels": r.labels,
                     "observed_days": r.observed_days,
                     "scored": r.ready,
+                    "error": r.error,
                     "alerts": [
                         {
                             "first": int(ts[a]),

@@ -171,3 +171,31 @@ anomaly itself and cannot be compared with the synthetic scenarios.
 - The rrcf based `rcf` here is not the AWS implementation that sits in the NAB scoreboard.
   The `awsrcf-*` models are (run them with `ANOMALY_AWSRCF_HOME` set, see `docs/design.md`);
   `awsrcf-nab` is the one that reproduces the scoreboard setting.
+
+## SMD and PSM (multivariate public data)
+
+`python -m anomaly_detection.harness.bench_cli run|report` scores the models on SMD (28
+servers, 38 dimensions) and PSM (one unit, 25 dimensions). The data directories are
+arguments, the data is not stored in this repository; `scripts/bench_smd_psm.sh` runs the
+stages used for `docs/results/m4-smd-psm.md`.
+
+- The models are univariate. Every dimension is scored alone, the score of a row is the
+  maximum over the dimensions, the label is per row of the machine. Dimensions without variance
+  over train and test together are dropped and counted.
+- Train rows are the warm-up (fed to the model, not scored), test rows are scored. Time is the
+  row index times 60 seconds. Missing values are skipped, never fed or zero-filled. Models with
+  a finite memory (`rcf`, `tspulse`, `toto-4m`) get only the last rows of the train part that
+  they can use (`WARMUP_TAIL` in `harness/bench_runner.py`).
+- Operating point: the alert rule above (0.5, 3 rows, merge gap 10, grace 5) on the row score,
+  events are the runs of label 1.
+- Oracle: the same event F1 at the one threshold (shared by all machines of the scope) that
+  maximises it on the test labels. It separates score quality from the threshold choice and is
+  not an achievable result.
+- Threshold free: average precision over all test rows of the scope (ties grouped), chosen over
+  VUS-PR because it needs no buffer parameter.
+- Point adjust F1 is printed apart as reference only; it counts a whole event as found after one
+  hit and inflates every result.
+- Cause: per labelled event, whether the dimension with the highest score inside the event is
+  one of the dimensions the interpretation labels list for it (SMD only). Ties count as the share
+  of tied dimensions that are right. The chance level is printed next to it.
+- `random` rows are uniform random scores, a floor for every metric.

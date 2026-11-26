@@ -20,7 +20,7 @@ import java.util.Map;
  * NEW  sid mode key=value ...   -> OK | ERR message          mode: rcf | trcf | caster
  * U    sid timestamp value      -> R score grade threshold expected lower upper ready
  * DEL  sid                      -> OK
- * MEM                           -> M usedBytes
+ * MEM                           -> M usedBytes (after a full GC)
  * QUIT
  * </pre>
  *
@@ -195,6 +195,7 @@ public final class AwsRcfBridge {
                     break;
                 case "MEM": {
                     Runtime r = Runtime.getRuntime();
+                    System.gc(); // so that the figure is live data, not garbage
                     reply = "M " + (r.totalMemory() - r.freeMemory());
                     break;
                 }

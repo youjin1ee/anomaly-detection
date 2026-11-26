@@ -47,8 +47,14 @@ def dataset_key(dataset: str, test_rows: int | None) -> str:
     return dataset if test_rows is None else f"{dataset}-first{test_rows}"
 
 
-def load_machines(dataset: str, data_dir: Path, test_rows: int | None) -> list[Machine]:
+def load_machines(
+    dataset: str, data_dir: Path, test_rows: int | None, subset: str = "all"
+) -> list[Machine]:
+    """The machines of a subset, with only the first `test_rows` test rows if given. The subset
+    is chosen on the full data, so it does not depend on `test_rows`."""
     ms = load_smd(data_dir) if dataset == "smd" else load_psm(data_dir)
+    keep = set(subset_names(ms, subset))
+    ms = [m for m in ms if m.name in keep]
     if test_rows is None:
         return ms
     return [
@@ -71,8 +77,7 @@ def usable_dims(m: Machine) -> list[int]:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    machines = load_machines(args.dataset, args.data_dir, args.test_rows)
-    keep = set(subset_names(machines, args.machines))
+    machines = load_machines(args.dataset, args.data_dir, args.test_rows, args.machines)
     key = dataset_key(args.dataset, args.test_rows)
     models = [x for x in args.models.split(",") if x]
     for x in models:
@@ -81,8 +86,6 @@ def cmd_run(args: argparse.Namespace) -> int:
     jobs: list[Job] = []
     points = 0
     for m in machines:
-        if m.name not in keep:
-            continue
         for j in usable_dims(m):
             points += len(m.test)
             for x in models:
@@ -235,14 +238,13 @@ def render_table(rows: list[dict]) -> str:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    machines = load_machines(args.dataset, args.data_dir, args.test_rows)
     key = dataset_key(args.dataset, args.test_rows)
     result = {}
     parts = []
     default = "all,s8,s3" if args.dataset == "smd" else "all"
     for sub in (args.machines or default).split(","):
-        names = set(subset_names(machines, sub))
-        scope = [m for m in machines if m.name in names]
+        scope = load_machines(args.dataset, args.data_dir, args.test_rows, sub)
+        names = {m.name for m in scope}
         rows = []
         for model in (*BENCH_MODELS, "random"):
             r = evaluate_scope(args.out, key, args.dataset, scope, model)

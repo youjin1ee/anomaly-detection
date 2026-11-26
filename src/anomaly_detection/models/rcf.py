@@ -44,6 +44,10 @@ class RCFModel:
     score_mid          CoDisp divided by the reference at which score is 0.5 (default 2.0)
     min_scale_ratio    floor of the normalisation scale as a fraction of the median
                        (default 0.02)
+
+    Some series (a counter that creeps up, a gauge that is almost flat) make rrcf build a
+    chain-shaped tree that exceeds the recursion limit. The forest is then rebuilt from
+    scratch, `resets` counts how often, and the model is silent until it has refilled.
     """
 
     _ALLOWED: ClassVar[set[str]] = {
@@ -82,18 +86,27 @@ class RCFModel:
         self._q = score_ref_quantile
         self._mid = score_mid
         self._min_ratio = min_scale_ratio
-        # One seeded generator per tree keeps runs reproducible, which the evaluation needs.
-        self._trees = [
-            rrcf.RCTree(random_state=np.random.RandomState(seed * 100003 + i))
-            for i in range(num_trees)
-        ]
+        self._seed = seed
+        self._num_trees = num_trees
+        self.resets = 0
+        self._trees: list[rrcf.RCTree] = []
+        self._new_forest()
         self._hist: deque[float] = deque(maxlen=norm_window)
         self._norm: deque[float] = deque(maxlen=shingle_size)
         self._ref_window = reference_window
-        self._codisp: deque[float] = deque(maxlen=2000)
         self._next_index = 0
-        self._indices: deque[int] = deque()
         self.samples = 0
+
+    def _new_forest(self) -> None:
+        # One seeded generator per tree keeps runs reproducible, which the evaluation needs.
+        # A rebuilt forest gets new seeds, otherwise it would degenerate the same way.
+        base = (self._seed + self.resets * 7919) * 100003
+        self._trees = [
+            rrcf.RCTree(random_state=np.random.RandomState((base + i) % 2**32))
+            for i in range(self._num_trees)
+        ]
+        self._indices: deque[int] = deque()
+        self._codisp: deque[float] = deque(maxlen=2000)
 
     def update(self, timestamp: float, value: float) -> ModelOutput | None:
         self.samples += 1
@@ -127,11 +140,16 @@ class RCFModel:
         total = 0.0
         evict = len(self._indices) >= self._size
         old = self._indices.popleft() if evict else None
-        for tree in self._trees:
-            if old is not None:
-                tree.forget_point(old)
-            tree.insert_point(point, index=idx)
-            total += tree.codisp(idx)
+        try:
+            for tree in self._trees:
+                if old is not None:
+                    tree.forget_point(old)
+                tree.insert_point(point, index=idx)
+                total += tree.codisp(idx)
+        except RecursionError:
+            self.resets += 1
+            self._new_forest()
+            return None
         self._indices.append(idx)
         codisp = total / len(self._trees)
 

@@ -170,3 +170,21 @@ def test_seasonal_idle_scale_ratio_does_not_touch_busy_slots():
     assert collapse({"idle_scale_ratio": 0.2}).score > 0.99
     assert collapse({"idle_scale_ratio": 0.2}).score == collapse({}).score
 
+
+def test_rcf_rebuilds_a_forest_that_exceeds_the_recursion_limit(monkeypatch):
+    import rrcf
+
+    m = create_model("rcf", {"sample_size": 64, "num_trees": 3, "shingle_size": 2}, STEP)
+    calls = {"n": 0}
+    real = rrcf.RCTree.insert_point
+
+    def flaky(self, point, index, tolerance=None):
+        calls["n"] += 1
+        if calls["n"] == 50:
+            raise RecursionError
+        return real(self, point, index, tolerance)
+
+    monkeypatch.setattr(rrcf.RCTree, "insert_point", flaky)
+    outs = feed(m, synth(2, seed=4)[:500])
+    assert m.resets == 1
+    assert outs[-1] is not None  # scores again once the new forest has refilled

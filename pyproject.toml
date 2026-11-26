@@ -20,6 +20,7 @@ dependencies = [
 anomaly-detection = "anomaly_detection.cli:main"
 anomaly-detection-eval = "anomaly_detection.harness.cli:main"
 anomaly-detection-nab = "anomaly_detection.harness.nab_cli:main"
+anomaly-detection-replay = "anomaly_detection.harness.replay_cli:main"
 
 [dependency-groups]
 dev = [

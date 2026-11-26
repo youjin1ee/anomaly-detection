@@ -17,6 +17,30 @@ class Result:
     upper: float | None
 
 
+def apply_guards(
+    score: float,
+    value: float,
+    expected: float,
+    direction: str = "both",
+    min_expected: float = 0.0,
+    tolerance_amount: float = 0.0,
+    tolerance_ratio: float = 0.0,
+) -> float:
+    """Guards shared by every model: direction, low-traffic floor and tolerance.
+
+    Pure function, so replays can apply different guard settings to stored model scores."""
+    dev = value - expected
+    if (direction == "above" and dev <= 0) or (direction == "below" and dev >= 0):
+        return 0.0
+    # Low traffic protection: a tiny expected value makes downward moves meaningless noise.
+    # A fall from a large expected value to zero is not affected, because expected is large.
+    if dev < 0 and expected < min_expected:
+        return 0.0
+    if abs(dev) <= tolerance_amount or abs(dev) <= tolerance_ratio * abs(expected):
+        return 0.0
+    return score
+
+
 class SeriesPipeline:
     def __init__(
         self,
@@ -56,16 +80,15 @@ class SeriesPipeline:
             self.last_result = None
             return None
 
-        score = out.score
-        dev = value - out.expected
-        if (self._direction == "above" and dev <= 0) or (self._direction == "below" and dev >= 0):
-            score = 0.0
-        # Low traffic protection: a tiny expected value makes downward moves meaningless noise.
-        # A fall from a large expected value to zero is not affected, because expected is large.
-        if dev < 0 and out.expected < self._min_expected:
-            score = 0.0
-        if abs(dev) <= self._tol_amount or abs(dev) <= self._tol_ratio * abs(out.expected):
-            score = 0.0
+        score = apply_guards(
+            out.score,
+            value,
+            out.expected,
+            self._direction,
+            self._min_expected,
+            self._tol_amount,
+            self._tol_ratio,
+        )
 
         self.last_result = Result(timestamp, value, score, out.expected, out.lower, out.upper)
         return self.last_result

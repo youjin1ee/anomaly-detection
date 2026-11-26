@@ -27,8 +27,10 @@ class AlertRule:
     grace: int = 5
 
 
-def alerts(scores: np.ndarray, rule: AlertRule, first_index: int = 0) -> list[int]:
-    """Sample indices at which an alert fires. NaN scores (no value) break a run."""
+def alert_spans(
+    scores: np.ndarray, rule: AlertRule, first_index: int = 0
+) -> list[tuple[int, int, int]]:
+    """Alerts as (first hot sample, firing sample, last hot sample). NaN scores break a run."""
     hot = np.nan_to_num(scores, nan=-1.0) >= rule.threshold
     runs: list[list[int]] = []  # [first, last]
     i, n = 0, len(hot)
@@ -44,7 +46,7 @@ def alerts(scores: np.ndarray, rule: AlertRule, first_index: int = 0) -> list[in
             i = j + 1
         else:
             i += 1
-    fires: list[int] = []
+    spans: list[tuple[int, int, int]] = []
     for first, last in runs:
         # the alert fires when the first stretch of for_points consecutive hot samples is complete
         k = first
@@ -53,10 +55,17 @@ def alerts(scores: np.ndarray, rule: AlertRule, first_index: int = 0) -> list[in
                 fire = k + rule.for_points - 1
                 # An alert that is already firing when the evaluation period starts counts
                 # as firing at its first sample.
-                fires.append(max(fire, first_index) if last >= first_index else fire)
+                fire = max(fire, first_index) if last >= first_index else fire
+                if fire >= first_index:
+                    spans.append((first, fire, last))
                 break
             k += 1
-    return [f for f in fires if f >= first_index]
+    return spans
+
+
+def alerts(scores: np.ndarray, rule: AlertRule, first_index: int = 0) -> list[int]:
+    """Sample indices at which an alert fires. NaN scores (no value) break a run."""
+    return [fire for _, fire, _ in alert_spans(scores, rule, first_index)]
 
 
 @dataclass

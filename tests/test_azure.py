@@ -71,8 +71,34 @@ def test_trace_request_sends_token_ids_with_exact_lengths_and_obeys_faults():
     state.fault = {"kind": "output_drop"}
     loadgen.one_request(url, "m", rng, state, _args(), shape=(37, 9))
     assert _Engine.bodies[-1]["max_tokens"] <= 3
+    state.fault = {"kind": "output_drop", "cap": 5}
+    loadgen.one_request(url, "m", rng, state, _args(), shape=(37, 9))
+    assert _Engine.bodies[-1]["max_tokens"] == 5
+    loadgen.one_request(url, "m", rng, state, _args(), shape=(37, 3))
+    assert _Engine.bodies[-1]["max_tokens"] == 3  # shorter answers stay as they are
     engine.shutdown()
     engine.server_close()
+
+
+def test_prepare_with_days_keeps_only_those_days_in_that_order(tmp_path):
+    csv_path = tmp_path / "t.csv"
+    _trace_csv(csv_path, days=3, per_hour=40)  # day 1 holds a quarter of the traffic
+    out = tmp_path / "t.npz"
+    meta = azure.prepare(csv_path, out, 3600, 0.05, 0.25, 200, 10, seed=1, days=[2, 0, 2])
+    z = np.load(out)
+    assert meta["days"] == [2, 0, 2] and z["hourly"].shape == (72,)
+    assert z["t"].min() >= 0 and z["t"].max() < 3 * 3600
+    per_slot = [int(((z["t"] >= i * 3600) & (z["t"] < (i + 1) * 3600)).sum()) for i in range(3)]
+    assert min(per_slot) > 0
+    assert len(set(z["t"].tolist())) == len(z["t"])  # no request is repeated
+
+
+def test_cap_for_ratio_leaves_the_asked_share_of_the_mean_length():
+    gen = np.array([2] * 50 + [8] * 30 + [60] * 20)  # mean 18.4, median 2 to 8
+    for r in (0.3, 0.5, 0.7):
+        c = azure.cap_for_ratio(gen, r)
+        assert np.minimum(gen, c).mean() >= r * gen.mean()
+        assert c == 1 or np.minimum(gen, c - 1).mean() < r * gen.mean()
 
 
 def test_replay_trace_sends_at_trace_times_and_request_drop_thins_arrivals(tmp_path):

@@ -3,7 +3,16 @@ import json
 
 import pytest
 
-from anomaly_detection.lab.injector import Event, build_banded_schedule, write_labels
+import numpy as np
+
+from anomaly_detection.lab import injector
+from anomaly_detection.lab.injector import (
+    SUBTLE_SPECS,
+    Event,
+    build_banded_schedule,
+    draw_params,
+    write_labels,
+)
 
 
 def test_banded_schedule_puts_every_scenario_in_every_band_each_day():
@@ -36,4 +45,59 @@ def test_labels_keep_natural_candidates_apart_from_injected_events(tmp_path):
     doc = json.loads(p.read_text())
     assert doc["events"][0]["band"] == "peak" and doc["natural_candidates"] == nat
     rows = p.with_suffix(".csv").read_text().splitlines()
-    assert rows[1].endswith(",peak,injected") and rows[2].endswith("candidate,,,,natural")
+    assert rows[1].endswith(",peak,gross,0,injected")
+    assert rows[2].endswith("candidate,,,,,,natural")
+    assert len(rows[0].split(",")) == len(rows[1].split(",")) == len(rows[2].split(","))
+
+
+def test_subtle_variants_are_balanced_and_sized_from_their_ranges():
+    sc = ("a", "b", "a:subtle", "b:subtle")
+    bands = {"peak": (0.5, 0.9), "trough": (0.0, 0.4)}
+    days = [3600 * d for d in range(3)]
+    ev = build_banded_schedule(days, 3600, bands, sc, (60, 100), 60, seed=4)
+    assert len(ev) == 3 * 2 * 4
+    for name, sev, band in itertools.product(("a", "b"), ("gross", "subtle"), bands):
+        assert sum(e.scenario == name and e.severity == sev and e.band == band for e in ev) == 3
+    specs = {
+        "a:subtle": {"factor": [0.5, 0.7], "target": [0.5, 0.7]},
+        "b:subtle": {"duty_by_band": {"peak": [0.1, 0.2], "trough": [0.4, 0.6]}, "target": [0.7, 0.85]},
+    }  # fmt: skip
+    draw_params(ev, specs, None, seed=4)
+    for e in ev:
+        if e.severity == "gross":
+            assert e.target is None and "factor" not in e.params
+        elif e.scenario == "a":
+            assert 0.5 <= e.params["factor"] <= 0.7 and e.target == [0.5, 0.7]
+        else:
+            lo, hi = specs["b:subtle"]["duty_by_band"][e.band]
+            assert lo <= e.params["duty"] <= hi
+    with pytest.raises(ValueError, match="calibrate"):
+        draw_params(ev, {"b:subtle": {"duty_by_band": {}, "target": [0, 1]}}, None, 1)
+
+
+def test_output_cap_for_a_subtle_event_comes_from_the_trace_lengths():
+    gen = np.array([2] * 50 + [8] * 30 + [60] * 20)
+    (e,) = [Event("output_length_drop", 0, 1, severity="subtle", band="peak")]
+    draw_params([e], SUBTLE_SPECS, gen, seed=1)
+    r = e.params["target_ratio"]
+    assert 0.5 <= r <= 0.7 and 1 <= e.params["cap"] <= 60
+    assert np.minimum(gen, e.params["cap"]).mean() >= r * gen.mean()
+
+
+def test_dry_run_lists_blocks_with_their_own_seeds(tmp_path, capsys):
+    hourly = np.tile(np.r_[np.full(8, 10.0), np.full(8, 100.0), np.full(8, 50.0)], 12)
+    npz = tmp_path / "t.npz"
+    np.savez(npz, hourly=hourly, gen=np.array([2, 8, 60] * 10), t=np.zeros(1))
+    argv = [
+        "--trace", str(npz), "--labels", str(tmp_path / "l.json"), "--epoch", "0",
+        "--day-seconds", "3600", "--warmup-days", "2", "--inject-days", "6", "--block-days", "3",
+        "--band-hours", "8", "--subtle", "--min-duration", "100", "--max-duration", "150",
+        "--min-gap", "60", "--scenarios", "request_drop,output_length_drop",
+        "--params", json.dumps({"throughput_drop:subtle": {"duty_by_band": {}}}),
+        "--dry-run",
+    ]  # fmt: skip
+    assert injector.main(argv) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 6 * 2 * 4
+    assert sum(" run1 " in x for x in out) == sum(" run2 " in x for x in out) == 24
+    assert sum(" subtle " in x for x in out) == 24

@@ -7,6 +7,16 @@ Scenarios and how they are injected (no root needed):
   throughput_drop     a competing GPU matrix multiplication process (contender) on the same GPU
   latency_rise        extra delay before every chunk the load generator receives
 
+Each scenario also has a subtle variant (key `name:subtle`, label severity "subtle"): the same
+fault at a size meant to stay inside the range the signal shows on a normal day, so a fixed
+limit cannot see it. The size is drawn per event from a range and the intended range is stored
+in the label (`target`); the effect that really happened is measured afterwards (`slice_run`).
+
+  request_drop:subtle        arrival rate x0.5 to 0.7
+  output_length_drop:subtle  output cap set so the mean answer is 0.5 to 0.7 of normal
+  throughput_drop:subtle     competitor with a duty cycle below 1, tuned per time of day band
+                             so that decode speed falls to 0.7 to 0.85
+
 The schedule is derived from a seed, so a run can be planned and repeated. Labels are written
 after every event, so an interrupted run still leaves usable ground truth.
 """
@@ -28,7 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .azure import band_windows, low_spans
+from .azure import band_windows, cap_for_ratio, low_spans
 from .signals import BY_SCENARIO, SCENARIOS
 
 
@@ -42,6 +52,9 @@ class Event:
     actual_end: float | None = None
     status: str = "planned"  # planned | completed | failed
     band: str = ""  # time of day band for a banded schedule (peak | trough)
+    severity: str = "gross"  # gross | subtle
+    block: int = 0  # which run of a collection (see slice_run) the event belongs to
+    target: list[float] | None = None  # intended effect ratio range of a subtle event
 
 
 def build_schedule(
@@ -87,7 +100,8 @@ def build_banded_schedule(
     """Every scenario once in every band of every day, so each scenario meets each time of day
     equally often. A band is (start, end) as fractions of the day, cut into one slot per
     scenario; the order of the scenarios inside a band is shuffled. As in `build_schedule`, an
-    event ends at least `min_gap` before its slot ends, so events never overlap."""
+    event ends at least `min_gap` before its slot ends, so events never overlap. A scenario
+    may be written `name:subtle`, which sets the severity of its events."""
     edges = sorted(bands.values())
     if any(hi > 1 for _, hi in edges) or any(a[1] > b[0] for a, b in itertools.pairwise(edges)):
         raise ValueError("bands must stay inside one day and not overlap")
@@ -106,8 +120,46 @@ def build_banded_schedule(
                     day_start + lo * day_seconds + i * slot + rng.uniform(0, slot - dur - min_gap)
                 )
                 params_ = dict((params or {}).get(scenario, {}))
-                events.append(Event(scenario, start, start + dur, params_, band=band))
+                name, _, sev = scenario.partition(":")
+                events.append(
+                    Event(name, start, start + dur, params_, band=band, severity=sev or "gross")
+                )
     return events
+
+
+# Sizes of the subtle variants. duty_by_band is filled from `lab.calibrate_faults` (the competitor
+# slows decoding more when many requests are in flight, so the peak needs a smaller duty).
+SUBTLE_SPECS: dict[str, dict] = {
+    "request_drop:subtle": {"factor": [0.5, 0.7], "target": [0.5, 0.7]},
+    "output_length_drop:subtle": {"target_ratio": [0.5, 0.7], "target": [0.5, 0.7]},
+    "throughput_drop:subtle": {"duty_by_band": {}, "target": [0.7, 0.85]},
+}
+
+
+def draw_params(
+    events: list[Event], specs: dict[str, dict], gen: np.ndarray | None, seed: int
+) -> None:
+    """Fill the size of every subtle event from its spec: `factor` and `duty` are drawn
+    uniformly from a range, `target_ratio` is turned into an output cap with `gen` (the trace's
+    generated token counts). Deterministic for a seed."""
+    rng = random.Random(seed)
+    for ev in events:
+        spec = specs.get(f"{ev.scenario}:{ev.severity}") if ev.severity != "gross" else None
+        if not spec:
+            continue
+        ev.target = list(spec["target"])
+        if "factor" in spec:
+            ev.params["factor"] = round(rng.uniform(*spec["factor"]), 3)
+        if "target_ratio" in spec:
+            if gen is None:
+                raise ValueError("target_ratio needs the trace (--trace)")
+            r = rng.uniform(*spec["target_ratio"])
+            ev.params.update(target_ratio=round(r, 3), cap=cap_for_ratio(gen, r))
+        if "duty_by_band" in spec:
+            lo_hi = spec["duty_by_band"].get(ev.band)
+            if not lo_hi:
+                raise ValueError(f"no duty range for band {ev.band!r}: calibrate first")
+            ev.params["duty"] = round(rng.uniform(*lo_hi), 3)
 
 
 def _call(url: str, method: str, body: dict | None = None) -> None:
@@ -177,6 +229,8 @@ def write_labels(
                 "expected_signal",
                 "expected_metric",
                 "band",
+                "severity",
+                "block",
                 "source",
             ]
         )
@@ -190,11 +244,13 @@ def write_labels(
                     r["expected_signal"],
                     r["expected_metric"],
                     r["band"],
+                    r["severity"],
+                    r["block"],
                     "injected",
                 ]
             )
         for n in natural or []:
-            w.writerow([n["kind"], n["start"], n["end"], "candidate", "", "", "", "natural"])
+            w.writerow([n["kind"], n["start"], n["end"], "candidate", "", "", "", "", "", "natural"])
 
 
 def run(
@@ -263,27 +319,53 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--inject-days", type=int, default=4, help="with --trace")
     p.add_argument("--band-hours", type=int, default=8, help="with --trace")
+    p.add_argument(
+        "--block-days",
+        type=int,
+        default=0,
+        help="with --trace: cut the injection days into runs of this many days, each with its"
+        " own schedule seed (seed + run number); 0 = one run",
+    )
+    p.add_argument(
+        "--subtle", action="store_true", help="add the subtle variant of every scenario"
+    )
     p.add_argument("--dry-run", action="store_true", help="print the schedule and exit")
     args = p.parse_args(argv)
 
     params = {k: {**v, **json.loads(args.params).get(k, {})} for k, v in DEFAULT_PARAMS.items()}
     eval_start = args.epoch + args.warmup_days * args.day_seconds
     scenarios = tuple(s for s in args.scenarios.split(",") if s)
+    if args.subtle:
+        scenarios += tuple(f"{s}:subtle" for s in scenarios if ":" not in s)
+    specs = json.loads(json.dumps(SUBTLE_SPECS))
+    for k, v in json.loads(args.params).items():
+        if k in specs:
+            specs[k].update(v)
     natural: list[dict] = []
     if args.trace:
         z = np.load(args.trace)
         first = int(args.warmup_days)
         bands = band_windows(z["hourly"], first, first + args.inject_days, args.band_hours)
-        events = build_banded_schedule(
-            [args.epoch + (first + d) * args.day_seconds for d in range(args.inject_days)],
-            args.day_seconds,
-            bands,
-            scenarios,
-            (args.min_duration, args.max_duration),
-            args.min_gap,
-            args.seed,
-            params,
-        )
+        step = args.block_days or args.inject_days
+        events = []
+        for block, d0 in enumerate(range(0, args.inject_days, step)):
+            part = build_banded_schedule(
+                [
+                    args.epoch + (first + d) * args.day_seconds
+                    for d in range(d0, min(d0 + step, args.inject_days))
+                ],
+                args.day_seconds,
+                bands,
+                scenarios,
+                (args.min_duration, args.max_duration),
+                args.min_gap,
+                args.seed + block,
+                params,
+            )
+            draw_params(part, specs, z["gen"], args.seed + block)
+            for e in part:
+                e.block = block + 1
+            events += part
         scale = args.day_seconds / 86400.0
         natural = [
             {
@@ -315,12 +397,14 @@ def main(argv: list[str] | None = None) -> int:
         "seed": args.seed,
         "planned_end": events[-1].end if events else eval_start,
         "bands": bands,
+        "block_days": args.block_days,
+        "subtle_specs": specs if args.subtle else {},
     }
     if args.dry_run:
         for e in events:
             print(
                 f"{e.start - args.epoch:8.0f}s +{e.end - e.start:4.0f}s {e.scenario}"
-                f" {e.band} {e.params}"
+                f" {e.severity} {e.band} run{e.block} {e.params}"
             )
         return 0
     env = dict(os.environ)

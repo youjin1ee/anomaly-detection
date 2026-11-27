@@ -45,8 +45,8 @@ def test_labels_keep_natural_candidates_apart_from_injected_events(tmp_path):
     doc = json.loads(p.read_text())
     assert doc["events"][0]["band"] == "peak" and doc["natural_candidates"] == nat
     rows = p.with_suffix(".csv").read_text().splitlines()
-    assert rows[1].endswith(",peak,gross,0,injected")
-    assert rows[2].endswith("candidate,,,,,,natural")
+    assert rows[1].endswith(",peak,gross,0,,,injected")
+    assert rows[2].endswith("candidate,,,,,,,,natural")
     assert len(rows[0].split(",")) == len(rows[1].split(",")) == len(rows[2].split(","))
 
 
@@ -101,3 +101,33 @@ def test_dry_run_lists_blocks_with_their_own_seeds(tmp_path, capsys):
     assert len(out) == 6 * 2 * 4
     assert sum(" run1 " in x for x in out) == sum(" run2 " in x for x in out) == 24
     assert sum(" subtle " in x for x in out) == 24
+
+
+def test_slice_run_cuts_blocks_into_continuous_runs_and_measures_effects(tmp_path):
+    from anomaly_detection.lab import slice_run
+
+    day, step = 600, 5
+    meta = {"epoch": 1000.0, "day_seconds": day, "warmup_days": 1, "block_days": 1,
+            "eval_start": 1600.0}  # fmt: skip
+    rows = ["timestamp,labels,value"]
+    for t in range(1000, 1000 + 3 * day, step):  # warm-up day, then blocks 1 and 2
+        v = 10.0 if not (2300 <= t < 2400) else 5.0  # request rate halves inside event 2
+        rows.append(f'{t},"signal=""request_rate""",{v}'.replace('""', '"'))
+    (tmp_path / "signals.csv").write_text("\n".join(rows))
+    ev = [
+        Event("request_drop", 1700, 1800, actual_start=1700, actual_end=1800, status="completed",
+              band="peak", block=1, severity="subtle", target=[0.5, 0.7]),
+        Event("request_drop", 2300, 2400, actual_start=2300, actual_end=2400, status="completed",
+              band="trough", block=2, severity="subtle", target=[0.4, 0.6]),
+    ]  # fmt: skip
+    write_labels(tmp_path / "labels.json", meta, ev)
+    out = tmp_path / "out"
+    assert slice_run.main(["--dump-dir", str(tmp_path), "--out-root", str(out)]) == 0
+    r1 = json.loads((out / "run1" / "labels.json").read_text())
+    r2 = json.loads((out / "run2" / "labels.json").read_text())
+    assert r1["events"][0]["effect"] == 1.0 and r1["events"][0]["in_target"] is False
+    assert r2["events"][0]["actual_start"] == 1700 and r2["events"][0]["start"] == 1700
+    assert r2["events"][0]["effect"] == 0.5 and r2["events"][0]["in_target"] is True
+    ts = [float(x.split(",")[0]) for x in (out / "run2" / "signals.csv").read_text().splitlines()[1:]]
+    assert ts == sorted(ts) and ts[0] == 1000 and ts[-1] == 2195  # warm-up, then block 2 moved
+    assert set(ts) == set(range(1000, 2200, 5))

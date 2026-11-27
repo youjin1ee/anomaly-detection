@@ -1,0 +1,32 @@
+# Store and detector of the subtle fault lab: the stack of ../inject-azure (its config and
+# scrape files) under a project and volume of its own, both containers pinned to CPUSET. The
+# detector image is the one ../inject-lab built; it is only run here.
+#
+#   CPUSET=12-19 docker compose -f compose.yaml up -d
+name: inject-subtle
+
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.156.0
+    network_mode: host
+    cpuset: ${CPUSET:-12-19}
+    command:
+      - -httpListenAddr=127.0.0.1:8428
+      - -retentionPeriod=30d
+      - -storageDataPath=/storage
+      - -promscrape.config=/etc/scrape.yml
+      - -search.latencyOffset=5s
+    volumes:
+      - ../inject-azure/scrape.yml:/etc/scrape.yml:ro
+      - vmdata:/storage
+
+  detector:
+    image: anomaly-detection:inject-lab
+    network_mode: host
+    cpuset: ${CPUSET:-12-19}
+    volumes:
+      - ../inject-azure/config.yaml:/etc/anomaly-detection/config.yaml:ro
+    depends_on: [victoriametrics]
+
+volumes:
+  vmdata:

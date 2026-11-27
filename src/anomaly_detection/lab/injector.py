@@ -55,6 +55,10 @@ class Event:
     severity: str = "gross"  # gross | subtle
     block: int = 0  # which run of a collection (see slice_run) the event belongs to
     target: list[float] | None = None  # intended effect ratio range of a subtle event
+    # filled in afterwards by `slice_run` from the dumped signal
+    effect: float | None = None  # signal during / signal before
+    level_before: float | None = None
+    in_target: bool | None = None
 
 
 def build_schedule(
@@ -231,6 +235,8 @@ def write_labels(
                 "band",
                 "severity",
                 "block",
+                "effect",
+                "in_target",
                 "source",
             ]
         )
@@ -246,11 +252,13 @@ def write_labels(
                     r["band"],
                     r["severity"],
                     r["block"],
+                    "" if r["effect"] is None else f"{r['effect']:.3f}",
+                    "" if r["in_target"] is None else r["in_target"],
                     "injected",
                 ]
             )
         for n in natural or []:
-            w.writerow([n["kind"], n["start"], n["end"], "candidate", "", "", "", "", "", "natural"])
+            w.writerow([n["kind"], n["start"], n["end"], "candidate", "", "", "", "", "", "", "", "natural"])
 
 
 def run(

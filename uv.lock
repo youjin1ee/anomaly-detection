@@ -225,6 +225,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+boom = [
+    { name = "pyarrow" },
+]
 toto = [
     { name = "torch" },
     { name = "toto-2" },
@@ -245,6 +248,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "pyarrow", marker = "extra == 'boom'", specifier = ">=15" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rrcf", specifier = "==0.4.4" },
@@ -252,7 +256,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'toto'", specifier = ">=2.4" },
     { name = "toto-2", marker = "extra == 'toto'", specifier = ">=2.0.0" },
 ]
-provides-extras = ["toto", "tspulse"]
+provides-extras = ["toto", "tspulse", "boom"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -43,6 +43,7 @@ Models:
 | `subpca` | Sub-PCA (the TSB-AD top univariate method), streaming: reconstruction error of the newest window against a PCA of recent windows, numpy only | shape changes in series with a regular pattern; no band; first score after about 270 samples. Defaults and NAB score in [docs/design.md](docs/design.md#sub-pca) |
 | `awsrcf` | AWS Random Cut Forest (Java, Apache-2.0) through a Java child process, optional | a forest that scores shape and, in mode `caster`, also gives an expected value and a calibrated band; needs a JVM, see [docs/design.md](docs/design.md#aws-rcf-java-integration) |
 | `tspulse` | IBM Granite TSPulse (1M parameters, zero-shot, Apache-2.0): three heads (time, fft, one step forecast), each scaled against its own history, maximum taken; band from forecast residuals | experimental. Needs the `tspulse` extra and the model files; 512 samples of context plus about 50 samples of history before the first score; CPU only |
+| `ensemble` | several members (default `awsrcf-nab`, `subpca`, data based range) turned to one calibrated scale, combined (`max`, `mean`, `vote`, routing by metric kind) with a rule layer (direction, minimum band, sparse, zero drop), two alert stages from false alarm budgets | when no single model is the best on every metric; needs about 5 days of backfill (2 warm-up, 3 calibration). See [docs/design.md](docs/design.md#ensemble-judgement-layer) and [m5-ensemble](docs/results/m5-ensemble.md) |
 | `static` | fixed lower and upper limit | hard limits, and as a comparison baseline |
 | `toto` | next-step quantile forecast of [Toto 2.0](https://github.com/DataDog/toto) (Apache-2.0, 4M to 2.5B parameters) over the last 512 values; band is the 0.1 and 0.9 quantiles | optional extra `pip install 'anomaly-detection[toto]'` and a downloaded checkpoint (`model_dir`); CPU only here. Proof of concept, see [m3-poc-toto](docs/results/m3-poc-toto.md) for accuracy and cost |
 
@@ -141,6 +142,7 @@ original label named `detector` is exported as `exported_detector`):
 | `anomaly_value` | the value that was scored |
 | `anomaly_expected` | expected value according to the model |
 | `anomaly_upper_band`, `anomaly_lower_band` | expected band (models that have one) |
+| `anomaly_tier` | `ensemble` model only: 0 none, 1 ai analysis stage (score 0.5 or more), 2 human stage (score 0.9 or more) |
 | `anomaly_detector_ready` | 1 when the series is scored, 0 while warming up or without a fresh value |
 
 While a series is warming up, only `anomaly_detector_ready 0` is exported: no score, no zeros.
@@ -239,6 +241,17 @@ per series threshold to a false alarm budget. Method and numbers:
 ```sh
 uv run anomaly-detection-boom /path/to/boom --cache-dir cache --out-dir out --tag subset \
     --max-days 14 --subset 20,40 --models fixed,seasonal,rcf,tspulse --workers 4
+```
+
+`anomaly-detection-ensemble` evaluates the ensemble judgement layer on the model score caches of
+the runs above (NAB, SMD, PSM, BOOM, recorded dumps, fault injection labs): single models and
+the combination methods side by side, with two alert stages taken from false alarm budgets.
+Method and numbers: [docs/results/m5-ensemble.md](docs/results/m5-ensemble.md).
+
+```sh
+uv run anomaly-detection-ensemble run --out out/boom.json --boom-root /path/to/boom \
+    --boom-cache cache
+uv run anomaly-detection-ensemble report out/boom.json
 ```
 
 For data with real noise, [`examples/inject-lab`](examples/inject-lab) runs a serving engine

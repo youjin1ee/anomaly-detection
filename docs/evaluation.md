@@ -199,3 +199,29 @@ stages used for `docs/results/m4-smd-psm.md`.
   one of the dimensions the interpretation labels list for it (SMD only). Ties count as the share
   of tied dimensions that are right. The chance level is printed next to it.
 - `random` rows are uniform random scores, a floor for every metric.
+
+## Ensemble judgement layer
+
+`anomaly-detection-ensemble` (`harness/ensemble_*.py`) scores combinations of cached model
+scores. Definitions:
+
+- unit: what an alert belongs to. A NAB file, an SMD machine (maximum over its dimensions), PSM
+  as one unit, a BOOM or recorded series, a lab signal.
+- windows: the warm-up of the earlier run, then a calibration window (3 days, at least 300
+  samples; 2 compressed days before the first injection for the lab runs), then the evaluation
+  window. Calibration uses scores only, never labels. Events that end before the evaluation
+  window are dropped, one that starts earlier is cut. Alerts count in the evaluation window.
+- stages: two thresholds from the same combined score, budgets 1 and 0.1 alerts per unit per
+  day (settings). The alert rule is the one above (3 consecutive samples, merge gap 10, grace 5).
+- labelled data: detection rate (recall), miss share, precision, false alarms per unit day (a
+  unit day is one unit observed for one day), F1 pooled over units, median delay from the event
+  start, share of units for which the stage can never fire (silent).
+- unlabelled data: every alert is a false alarm. Pooled alerts per unit day, mean and 90th
+  percentile per unit, share of units at or below the budget of the stage, silent share.
+- `raw:<model>` rows are the operating rule of the earlier results (raw score at least 0.5 for
+  3 samples) on the same evaluation window, both stages the same.
+- `@max` rows run without tail extrapolation (thresholds from the plain maximum of the
+  calibration window).
+- macro average: mean over the datasets of each kind, every dataset one vote.
+
+Composition and settings are fixed for all data sets before the run and not tuned per data set.

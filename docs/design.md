@@ -212,3 +212,122 @@ components (0.5, 0.75, 2, 3) and refit period (64, 288) gave 7.6 to 24.1, the be
 window 6 with 3 components refitted every 64 samples. That setting was not adopted: it was
 chosen on the same corpus it is scored on, and a window of 6 is not a subsequence in the
 sense of the method.
+
+## Ensemble judgement layer
+
+Code: `src/anomaly_detection/ensemble/` (calibration, combination, rules, stages), the sidecar
+model `models/ensemble.py`, the evaluation tool `harness/ensemble_*.py`. Measurements are in
+[docs/results/m5-ensemble.md](results/m5-ensemble.md).
+
+### Why several models
+
+No single model won on every data set (m2 to m4 results): AWS RCF with the NAB setting on NAB and
+SMD, Sub-PCA on PSM, the fixed range and AWS RCF (caster) on large faults of an LLM serving
+trace. The false alarm ranking is different again (awsrcf-nab and fixed lowest, seasonal and
+awsrcf caster highest). The gap between the best threshold and the operating rule (score at
+least 0.5 for three samples) was large for every model, and the scores do not share a scale
+(awsrcf concentrates in 0.97 to 0.9999, fixed is 0 or 1). So the layer has to bring the models to
+one scale first, and the thresholds have to come from a false alarm budget, not from 0.5.
+
+### Score calibration
+
+Per model and per series, from the calibration window (default 3 days right after the warm-up,
+at least 300 samples so that hourly series get more days):
+
+- surprise `x = -log10 p`, `p` being the probability that a normal sample of this series scores
+  at least this high. One scale for every model, higher is more anomalous, capped at 8.
+- body: empirical, `p = (rank + 1) / (n + 1)` (the plus one is the usual conformal p-value, so
+  a score at or above the window maximum has `p = 1 / (n + 1)`, never 0).
+- tail: above the 90th percentile of the window the excesses get a generalised Pareto
+  distribution, fitted by probability weighted moments (closed form, numpy only). A score above
+  everything in the window then still gets a finite `x` that grows with the score.
+- shape clamped to [0, 0.5]. Scores are bounded, which would call for a negative shape, but a
+  heavier tail only raises `p` of large scores, so the clamp errs towards fewer alerts.
+- no tail (fewer than 20 excesses, or discrete scores such as the 0/1 of `fixed`): empirical body
+  only. Everything above the maximum ties at `log10(n + 1)`.
+- fewer than 100 scores in the window: the model is left out for that series.
+
+Why a tail model: the maximum of a short window does not represent the tail. On BOOM the
+threshold taken from the calibration window maximum with a floor of 0.5 stayed in budget but let
+some series go silent forever, without the floor it exceeded the budget 2.5 to 5 times
+(docs/results/m4-boom.md). Options considered:
+
+| option | judgement |
+|---|---|
+| rank or quantile only | ties above the window maximum, no information about how far above |
+| z-score or logistic of the raw score | needs a distribution assumption per model, scores are bounded and discrete |
+| extreme value fit of block maxima | blocks of a 3 day window are too few |
+| generalised Pareto over a threshold (chosen) | uses the top 10 percent of samples, closed form fit, the extrapolation is explicit and can be switched off (`extrapolate=False`) for comparison |
+
+### Combination
+
+All inputs are surprise values, so they can be compared and averaged.
+
+| method | combined score | meaning |
+|---|---|---|
+| `max` (or) | highest surprise | any model alone alerts |
+| `mean` | mean over the models that gave a score | evidence adds up, one model rarely alerts alone |
+| `vote` (m of k) | m-th highest surprise | at least m models agree |
+| routing | by metric kind, see `combine.ROUTES` | request: fixed and awsrcf, latency: 2 of 3, error: fixed and awsrcf-nab, resource: subpca and awsrcf-nab, other: or of the three |
+
+The default members are `awsrcf-nab`, `subpca` and `fixed` (data based range: half the range of
+the warm-up outside its minimum and maximum). `seasonal` is only in the comparison.
+
+### Rule layer
+
+Ideas from the decision rules of Grafana's promql-anomaly-detection (Apache-2.0). No code was
+copied. Expected value is the median of 48 samples spread over the last day, so the rules need
+nothing from the model.
+
+| rule | effect |
+|---|---|
+| direction by kind | latency and error series count rises only |
+| minimum band | deviations up to 5 percent of the series scale (99th percentile of the calibration window) or of the expected value are ignored, and falls while the expected value is below 5 percent of the scale |
+| sparse | a request series below 5 events per minute in the calibration window is left out (needs a known unit) |
+| zero drop | a request series that is 0 where it was above 0 one day earlier alerts at once (needs that 0 is a real zero) |
+
+Suppression applies before the thresholds are taken, the forced alert after, so one forced event
+in the window does not raise the thresholds.
+
+### Two stages from one score
+
+The stage thresholds come from the same combined score and two budgets (setting, default 1 alert
+per unit per day for the stage that goes to the automatic analysis, 0.1 for the stage that pages
+a person). On the calibration window the held score (smallest of the last 3 values, the `for: 3`
+clause) is clustered like the alert merge rule. The peaks of the clusters get an exponential tail
+(peaks over threshold: the 10 highest peaks above the next one, mean excess as scale) and the
+threshold is the level at which `rate = budget`. With fewer than 3 peaks the scale is one
+decade of surprise. This is needed because budget 0.1 per day on a 3 day window means 0.3 alerts,
+which the alert count of the window cannot express. A threshold above the cap means the unit is
+silent for that stage.
+
+The sidecar model `ensemble` streams the same steps (warm-up, calibration, scoring) and returns
+`score` (0.5 at the first threshold, 0.9 at the second, 1.0 for a forced alert) and `tier` (0, 1
+or 2), exported as `anomaly_tier`. A test keeps it equal to the array path. The alert rule
+stays outside: `anomaly_score >= 0.5` for 3 minutes is the first stage, `>= 0.9` the second. The
+backfill must cover warm-up and calibration (default 2 + 3 days) after every restart.
+
+```yaml
+detectors:
+  - name: request_rate
+    query: sum(rate(vllm:request_success_total[1m]))
+    interval: 5m
+    backfill: 7d  # warm-up 2 days + calibration 3 days, plus margin
+    model:
+      kind: ensemble
+      params:
+        members: [awsrcf-nab, subpca, fixed]
+        combine: mean
+        metric_kind: request
+        zero_is_real: true
+```
+
+### Limits
+
+- Calibration assumes the window is normal. Anomalies inside it raise the thresholds; the
+  evaluation counts them as normal, as a deployment without labels would.
+- A series with few values in the window (sparse data) stays silent.
+- Per unit budgets are not guaranteed out of sample: data drift after the window and anomalies in
+  the window move the real rate (numbers in the results document).
+- The streaming rule layer indexes the last day by sample count, the array path by grid
+  position, so they differ for series with missing samples.

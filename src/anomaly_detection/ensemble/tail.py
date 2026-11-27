@@ -139,7 +139,9 @@ def budget_threshold(
         thr = x_min if allowed >= len(peaks) else float(np.nextafter(peaks[k], math.inf))
     else:
         m = min(top, len(peaks))
-        if m >= 1 and allowed >= m:  # budget covers every peak of the fit: read it from the order statistics
+        if (
+            m >= 1 and allowed >= m
+        ):  # budget covers every peak of the fit: read it from the order statistics
             thr = x_min if allowed >= len(peaks) else float(np.nextafter(peaks[k], math.inf))
         else:
             u0 = float(peaks[m]) if len(peaks) > m else x_min

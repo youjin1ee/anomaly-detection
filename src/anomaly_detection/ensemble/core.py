@@ -37,6 +37,7 @@ class EnsembleSpec:
     vote: int = 2
     route: bool = False  # members and combination by metric kind (combine.ROUTES)
     rules: bool = False  # rule layer (rules.py)
+    raw: bool = False  # reference: the first member's raw score with a fixed 0.5 threshold
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class EnsembleConfig:
 @dataclass
 class PreparedSeries:
     x: dict[str, np.ndarray]  # model -> surprise
+    raw: dict[str, np.ndarray]  # model -> raw score
     values: np.ndarray
     info: SeriesInfo
     rule: RuleResult | None = None
@@ -84,12 +86,14 @@ def prepare_series(
 ) -> PreparedSeries:
     x = {name: c.surprise(raws[name]) for name, c in fit_calibrators(raws, cal, cfg).items()}
     rule = apply_rules(values, info, cal, cfg.rules) if need_rules else None
-    return PreparedSeries(x, values, info, rule)
+    return PreparedSeries(x, raws, values, info, rule)
 
 
 def series_surprise(p: PreparedSeries, spec: EnsembleSpec) -> tuple[np.ndarray, np.ndarray | None]:
     """(combined surprise, forced samples) of one series. Forced is None without rules."""
     n = len(p.values)
+    if spec.raw:
+        return p.raw.get(spec.members[0], np.full(n, np.nan)), None
     if spec.route:
         how, vote, names = ROUTES.get(p.info.kind, ROUTES["other"])
     else:
@@ -127,6 +131,8 @@ def unit_score(
     parts = [series_surprise(p, spec) for p in prepared]
     model_x = _nanmax_rows([x for x, _ in parts])
     forced = [f for _, f in parts if f is not None]
+    if spec.raw:
+        return UnitScore(model_x, (0.5, 0.5), (False, False))
     cal_x = model_x[cal[0] : cal[1]]
     days = (cal[1] - cal[0]) / prepared[0].info.spd
     usable = bool(np.isfinite(cal_x).any())

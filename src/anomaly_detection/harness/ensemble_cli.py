@@ -42,6 +42,7 @@ ENSEMBLES: tuple[EnsembleSpec, ...] = (
     EnsembleSpec("vote2of3", BASE, "vote", 2),
     EnsembleSpec("route", route=True),
     EnsembleSpec("or3+rules", BASE, rules=True),
+    EnsembleSpec("mean3+rules", BASE, "mean", rules=True),
     EnsembleSpec("vote2of3+rules", BASE, "vote", 2, rules=True),
     EnsembleSpec("route+rules", route=True, rules=True),
     # comparison only: seasonal is not in the default composition
@@ -52,7 +53,8 @@ ABLATION = ("or3", "or3+rules")  # also run without tail extrapolation (suffix @
 
 def specs_for(models: list[str]) -> list[EnsembleSpec]:
     singles = [EnsembleSpec(m, (m,)) for m in SINGLES if m in models]
-    return [*singles, *ENSEMBLES]
+    raw = [EnsembleSpec(f"raw:{m}", (m,), raw=True) for m in SINGLES if m in models]
+    return [*raw, *singles, *ENSEMBLES]
 
 
 def parse_pairs(items: list[str]) -> dict[str, Path]:
@@ -109,6 +111,40 @@ def _f(x: float, nd: int = 3) -> str:
     return "n/a" if x is None or (isinstance(x, float) and math.isnan(x)) else f"{x:.{nd}f}"
 
 
+def _avg(results: dict, datasets: list[str], spec: str, stage: str, key: str) -> float:
+    """Mean over the datasets that have the spec, NaN when a value is missing."""
+    v = [results[d][spec][stage][key] for d in datasets if spec in results[d]]
+    return sum(v) / len(v) if v and not any(math.isnan(x) for x in v) else math.nan
+
+
+def summary(results: dict) -> str:
+    """Macro average over the datasets: F1 and detection on labelled ones, pooled false alarms
+    per unit day and the share of units within the budget on unlabelled ones."""
+    lab = [
+        d for d, sp in results.items() if "recall" in next(iter(next(iter(sp.values())).values()))
+    ]
+    unl = [d for d in results if d not in lab]
+    names = list(results[next(iter(results))])
+    out = [f"\n### macro average (labelled: {', '.join(lab)}; unlabelled: {', '.join(unl)})\n"]
+    for stage in STAGES:
+        out += [
+            f"\n{stage} stage\n",
+            "| spec | F1 | detection | precision | FA/unit-day (labelled) "
+            "| FA/unit-day (unlabelled) | within budget |\n|---|---|---|---|---|---|---|",
+        ]
+        for n in names:
+            v = [
+                _avg(results, lab, n, stage, "f1"),
+                _avg(results, lab, n, stage, "recall"),
+                _avg(results, lab, n, stage, "precision"),
+                _avg(results, lab, n, stage, "fa_per_day"),
+                _avg(results, unl, n, stage, "alerts_per_day"),
+            ]
+            budget = _avg(results, unl, n, stage, "within_budget")
+            out.append(f"| {n} | " + " | ".join(_f(x) for x in v) + f" | {_f(budget, 2)} |")
+    return "\n".join(out)
+
+
 def render(doc: dict) -> str:
     lines = []
     for ds, specs in doc["results"].items():
@@ -141,7 +177,7 @@ def render(doc: dict) -> str:
                         f"| {_f(m['fa_per_unit_day_mean'])} | {_f(m['fa_per_unit_day_p90'])} "
                         f"| {_f(m['within_budget'], 2)} | {_f(m['silent_share'], 2)} |"
                     )
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n" + summary(doc["results"])
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -171,14 +207,17 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--models", default="fixed,seasonal,subpca,awsrcf-nab,awsrcf")
     q.add_argument("--workers", type=int, default=4)
     s = sub.add_parser("report")
-    s.add_argument("json", type=Path)
+    s.add_argument("json", type=Path, nargs="+", help="result files, merged")
     a = p.parse_args(argv)
     if a.cmd == "run":
         return cmd_run(a)
     if a.cmd == "qa-score":
         score_missing(a.qa_dumps, a.qa_cache, a.models.split(","), a.workers)
         return 0
-    print(render(json.loads(a.json.read_text())))
+    merged: dict = {"results": {}}
+    for f in a.json:
+        merged["results"].update(json.loads(f.read_text())["results"])
+    print(render(merged))
     return 0
 
 

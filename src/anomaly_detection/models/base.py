@@ -23,6 +23,8 @@ class ModelOutput:
     expected: float
     lower: float | None = None
     upper: float | None = None
+    # alert stage of the ensemble model: 0 none, 1 ai analysis, 2 human. None for other models.
+    tier: int | None = None
 
 
 class Model(Protocol):

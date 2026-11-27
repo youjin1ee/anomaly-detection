@@ -57,6 +57,10 @@ class DetectorCollector:
             "anomaly_lower_band": GaugeMetricFamily(
                 "anomaly_lower_band", "Lower edge of the expected band (models with a band only)"
             ),
+            "anomaly_tier": GaugeMetricFamily(
+                "anomaly_tier",
+                "Alert stage of an ensemble model: 0 none, 1 ai analysis, 2 human",
+            ),
             "anomaly_detector_ready": GaugeMetricFamily(
                 "anomaly_detector_ready",
                 "1 when the series is scored, 0 while warming up or without a fresh value",
@@ -146,6 +150,8 @@ class DetectorCollector:
             lab = dict(zip(names, values, strict=True))
             fam["anomaly_detector_ready"].add_sample("anomaly_detector_ready", lab, 1.0)
             fam["anomaly_score"].add_sample("anomaly_score", lab, result.score)
+            if result.tier is not None:
+                fam["anomaly_tier"].add_sample("anomaly_tier", lab, float(result.tier))
             fam["anomaly_value"].add_sample("anomaly_value", lab, result.value)
             fam["anomaly_expected"].add_sample("anomaly_expected", lab, result.expected)
             if result.upper is not None:

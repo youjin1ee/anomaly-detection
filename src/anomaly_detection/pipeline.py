@@ -15,6 +15,7 @@ class Result:
     expected: float
     lower: float | None
     upper: float | None
+    tier: int | None = None
 
 
 def apply_guards(
@@ -90,5 +91,7 @@ class SeriesPipeline:
             self._tol_ratio,
         )
 
-        self.last_result = Result(timestamp, value, score, out.expected, out.lower, out.upper)
+        self.last_result = Result(
+            timestamp, value, score, out.expected, out.lower, out.upper, out.tier
+        )
         return self.last_result

@@ -4,6 +4,7 @@
 
 from . import (  # noqa: F401  (registration side effects)
     awsrcf,
+    ensemble,
     rcf,
     seasonal,
     static,

@@ -224,4 +224,4 @@ scores. Definitions:
   calibration window).
 - macro average: mean over the datasets of each kind, every dataset one vote.
 
-Composition and settings are fixed for all data sets before the run and not tuned per data set.
+Compositions and settings are the same for every data set and not tuned per data set.

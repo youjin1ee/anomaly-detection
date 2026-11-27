@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 import os
 import random
@@ -25,6 +26,9 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import numpy as np
+
+from .azure import band_windows, low_spans
 from .signals import BY_SCENARIO, SCENARIOS
 
 
@@ -37,6 +41,7 @@ class Event:
     actual_start: float | None = None
     actual_end: float | None = None
     status: str = "planned"  # planned | completed | failed
+    band: str = ""  # time of day band for a banded schedule (peak | trough)
 
 
 def build_schedule(
@@ -66,6 +71,42 @@ def build_schedule(
         offset = rng.uniform(0, slot_seconds - dur - min_gap)
         start = slot_start + offset
         events.append(Event(scenario, start, start + dur, dict((params or {}).get(scenario, {}))))
+    return events
+
+
+def build_banded_schedule(
+    day_starts: list[float],
+    day_seconds: float,
+    bands: dict[str, tuple[float, float]],
+    scenarios: tuple[str, ...],
+    duration_range: tuple[float, float],
+    min_gap: float,
+    seed: int,
+    params: dict[str, dict] | None = None,
+) -> list[Event]:
+    """Every scenario once in every band of every day, so each scenario meets each time of day
+    equally often. A band is (start, end) as fractions of the day, cut into one slot per
+    scenario; the order of the scenarios inside a band is shuffled. As in `build_schedule`, an
+    event ends at least `min_gap` before its slot ends, so events never overlap."""
+    edges = sorted(bands.values())
+    if any(hi > 1 for _, hi in edges) or any(a[1] > b[0] for a, b in itertools.pairwise(edges)):
+        raise ValueError("bands must stay inside one day and not overlap")
+    rng = random.Random(seed)
+    events: list[Event] = []
+    for day_start in day_starts:
+        for band, (lo, hi) in sorted(bands.items(), key=lambda b: b[1]):
+            slot = (hi - lo) * day_seconds / len(scenarios)
+            order = list(scenarios)
+            rng.shuffle(order)
+            for i, scenario in enumerate(order):
+                dur = rng.uniform(*duration_range)
+                if dur + min_gap > slot:
+                    raise ValueError("a band is too short for its slots, duration and min_gap")
+                start = (
+                    day_start + lo * day_seconds + i * slot + rng.uniform(0, slot - dur - min_gap)
+                )
+                params_ = dict((params or {}).get(scenario, {}))
+                events.append(Event(scenario, start, start + dur, params_, band=band))
     return events
 
 
@@ -110,7 +151,11 @@ class Injector:
             self._proc = None
 
 
-def write_labels(path: Path, meta: dict, events: list[Event]) -> None:
+def write_labels(
+    path: Path, meta: dict, events: list[Event], natural: list[dict] | None = None
+) -> None:
+    """`natural` are stretches where the replayed trace itself looks anomalous. They are kept
+    apart from the injected events (`natural_candidates`, and source=natural in the csv)."""
     rows = []
     for e in events:
         d = asdict(e)
@@ -118,11 +163,23 @@ def write_labels(path: Path, meta: dict, events: list[Event]) -> None:
         d["expected_metric"] = BY_SCENARIO[e.scenario].query
         rows.append(d)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"meta": meta, "events": rows}, indent=1))
+    doc = {"meta": meta, "events": rows, "natural_candidates": natural or []}
+    tmp.write_text(json.dumps(doc, indent=1))
     os.replace(tmp, path)
     with path.with_suffix(".csv").open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["scenario", "start", "end", "status", "expected_signal", "expected_metric"])
+        w.writerow(
+            [
+                "scenario",
+                "start",
+                "end",
+                "status",
+                "expected_signal",
+                "expected_metric",
+                "band",
+                "source",
+            ]
+        )
         for r in rows:
             w.writerow(
                 [
@@ -132,12 +189,22 @@ def write_labels(path: Path, meta: dict, events: list[Event]) -> None:
                     r["status"],
                     r["expected_signal"],
                     r["expected_metric"],
+                    r["band"],
+                    "injected",
                 ]
             )
+        for n in natural or []:
+            w.writerow([n["kind"], n["start"], n["end"], "candidate", "", "", "", "natural"])
 
 
-def run(events: list[Event], inj: Injector, labels: Path, meta: dict) -> None:
-    write_labels(labels, meta, events)
+def run(
+    events: list[Event],
+    inj: Injector,
+    labels: Path,
+    meta: dict,
+    natural: list[dict] | None = None,
+) -> None:
+    write_labels(labels, meta, events, natural)
     try:
         for ev in events:
             time.sleep(max(0.0, ev.start - time.time()))
@@ -154,7 +221,7 @@ def run(events: list[Event], inj: Injector, labels: Path, meta: dict) -> None:
                 inj.clear()
                 ev.actual_end = time.time()
                 print(f"{ev.actual_end:.0f} end {ev.scenario}", flush=True)
-                write_labels(labels, meta, events)
+                write_labels(labels, meta, events, natural)
     finally:
         inj.clear()
 
@@ -188,21 +255,58 @@ def main(argv: list[str] | None = None) -> int:
         default=sys.executable,
         help="python with torch and CUDA, used for throughput_drop",
     )
+    p.add_argument(
+        "--trace",
+        type=Path,
+        help="npz of the replayed trace: one event per scenario in the peak and the trough band"
+        " of every day after warm-up (use --warmup-days, --inject-days), natural labels added",
+    )
+    p.add_argument("--inject-days", type=int, default=4, help="with --trace")
+    p.add_argument("--band-hours", type=int, default=8, help="with --trace")
     p.add_argument("--dry-run", action="store_true", help="print the schedule and exit")
     args = p.parse_args(argv)
 
     params = {k: {**v, **json.loads(args.params).get(k, {})} for k, v in DEFAULT_PARAMS.items()}
     eval_start = args.epoch + args.warmup_days * args.day_seconds
-    events = build_schedule(
-        eval_start + args.first_offset,
-        args.per_scenario,
-        args.slot_seconds,
-        (args.min_duration, args.max_duration),
-        args.min_gap,
-        args.seed,
-        tuple(s for s in args.scenarios.split(",") if s),
-        params,
-    )
+    scenarios = tuple(s for s in args.scenarios.split(",") if s)
+    natural: list[dict] = []
+    if args.trace:
+        z = np.load(args.trace)
+        first = int(args.warmup_days)
+        bands = band_windows(z["hourly"], first, first + args.inject_days, args.band_hours)
+        events = build_banded_schedule(
+            [args.epoch + (first + d) * args.day_seconds for d in range(args.inject_days)],
+            args.day_seconds,
+            bands,
+            scenarios,
+            (args.min_duration, args.max_duration),
+            args.min_gap,
+            args.seed,
+            params,
+        )
+        scale = args.day_seconds / 86400.0
+        natural = [
+            {
+                "kind": "natural_low_traffic",
+                "start": args.epoch + sp["start"] * scale,
+                "end": args.epoch + sp["end"] * scale,
+                "days": sp["days"],
+                "ratio_to_median_day": sp["ratio_to_median_day"],
+            }
+            for sp in low_spans(z["hourly"])
+        ]
+    else:
+        bands = {}
+        events = build_schedule(
+            eval_start + args.first_offset,
+            args.per_scenario,
+            args.slot_seconds,
+            (args.min_duration, args.max_duration),
+            args.min_gap,
+            args.seed,
+            scenarios,
+            params,
+        )
     meta = {
         "epoch": args.epoch,
         "day_seconds": args.day_seconds,
@@ -210,16 +314,20 @@ def main(argv: list[str] | None = None) -> int:
         "eval_start": eval_start,
         "seed": args.seed,
         "planned_end": events[-1].end if events else eval_start,
+        "bands": bands,
     }
     if args.dry_run:
         for e in events:
-            print(f"{e.start - args.epoch:8.0f}s +{e.end - e.start:4.0f}s {e.scenario} {e.params}")
+            print(
+                f"{e.start - args.epoch:8.0f}s +{e.end - e.start:4.0f}s {e.scenario}"
+                f" {e.band} {e.params}"
+            )
         return 0
     env = dict(os.environ)
     src = str(Path(__file__).resolve().parents[2])
     env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
     contender = [args.contender_python, "-m", "anomaly_detection.lab.contender"]
-    run(events, Injector(args.loadgen, contender, env), args.labels, meta)
+    run(events, Injector(args.loadgen, contender, env), args.labels, meta, natural)
     return 0
 
 

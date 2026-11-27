@@ -9,6 +9,7 @@ from anomaly_detection.harness.replay import (
     RecordedSeries,
     alert_context,
     cached_run,
+    calibrated_threshold,
     evaluate_series,
     guarded_scores,
     load_dumps,
@@ -156,3 +157,48 @@ def test_vectorised_guards_equal_scalar_rules():
                 continue
             want = apply_guards(raw.score[i], values[i], raw.expected[i], direction, 8.0, 4.0, 0.1)
             assert vec[i] == want
+
+
+def test_calibrated_threshold_keeps_budget_on_the_calibration_stretch():
+    scores = np.zeros(200)
+    scores[50:54] = 0.8
+    scores[100:104] = 0.6
+    rule = AlertRule()
+    thr = calibrated_threshold(scores, 0, 200, rule, allowed=0, floor=0.0)
+    assert 0.8 < thr < 0.81 and alert_spans(scores, AlertRule(threshold=thr)) == []
+    thr = calibrated_threshold(scores, 0, 200, rule, allowed=1, floor=0.1)
+    assert 0.6 < thr < 0.61  # the weaker of the two alerts may fire
+    assert len(alert_spans(scores, AlertRule(threshold=thr))) == 1
+    # the floor is the lowest threshold, and a window without scores gives the floor
+    assert calibrated_threshold(scores, 0, 200, rule, allowed=5, floor=0.5) == 0.5
+    assert calibrated_threshold(np.full(50, np.nan), 0, 50, rule, 0, 0.3) == 0.3
+    # a score of exactly 1 for three samples cannot be avoided by any threshold up to 1
+    assert calibrated_threshold(np.ones(30), 0, 30, rule, 0, 0.0) > 1.0
+
+
+def test_evaluate_series_eval_start_moves_the_counted_period():
+    values = np.full(400, 10.0)
+    raw = RawOutput(np.zeros(400), np.zeros(400))
+    raw.score[150:160] = 1.0  # between warmup end (100) and eval start (200)
+    raw.score[300:310] = 1.0
+    s = _series(values)
+    a = evaluate_series(s, raw, "m", 60, 100, Guards(), AlertRule())
+    b = evaluate_series(s, raw, "m", 60, 100, Guards(), AlertRule(), eval_start=200)
+    assert len(a.spans) == 2 and len(b.spans) == 1 and b.spans[0][0] == 300
+
+
+def test_cached_run_uses_given_runner_and_keeps_seconds(tmp_path):
+    calls = []
+
+    def fake(spec, series, step, warmup_end):
+        calls.append(1)
+        return RawOutput(np.ones(3), np.zeros(3), "", 2.5)
+
+    s = _series([1.0, 2.0, 3.0])
+    spec = parse_model("seasonal")
+    a = cached_run(spec, s, 60, 1, tmp_path, run=fake)
+    b = cached_run(spec, s, 60, 1, tmp_path, run=fake)
+    assert len(calls) == 1 and a.seconds == b.seconds == 2.5
+    # other data under the same key is another cache entry
+    cached_run(spec, _series([1.0, 2.0, 4.0]), 60, 1, tmp_path, run=fake)
+    assert len(calls) == 2

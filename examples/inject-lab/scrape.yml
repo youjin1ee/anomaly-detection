@@ -1,0 +1,17 @@
+scrape_configs:
+  - job_name: engine
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+  - job_name: loadgen
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["127.0.0.1:9201"]
+  - job_name: gpu
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["127.0.0.1:9202"]
+  - job_name: detector
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["127.0.0.1:8080"]

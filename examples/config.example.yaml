@@ -1,0 +1,56 @@
+# Complete example. Every key except datasource.url and detectors is optional.
+datasource:
+  url: https://metrics.example.org:8481
+  path_prefix: /select/0/prometheus    # tenant path, for example VictoriaMetrics cluster
+  headers:
+    X-Scope-OrgID: tenant-a            # for example Mimir or Cortex
+  auth:
+    type: bearer                       # none | bearer | basic
+    token: ${METRICS_TOKEN}            # ${VAR} is expanded in this section only
+    # token_file: /var/run/secrets/metrics/token
+    # type: basic with username, password or password_file
+  tls:
+    ca_file: /etc/ssl/internal-ca.pem
+    # cert_file / key_file for mutual TLS, insecure_skip_verify: true for tests only
+  timeout: 30
+  max_points_per_request: 10000        # Prometheus rejects more than 11000 per series
+
+server:
+  listen: 0.0.0.0:8080
+
+defaults:
+  interval: 60s                        # evaluation period, also the model's sample spacing
+  backfill: 1d                         # history replayed at start
+  max_series_per_detector: 100
+  max_series_total: 500
+  stale_after_intervals: 30            # forget a series that has not appeared for this long
+
+detectors:
+  - name: request_rate_drop
+    query: sum(rate(http_requests_total[5m]))   # aggregate: one model per returned series
+    direction: below                    # above | below | both
+    interval: 60s
+    min_expected: 1                     # ignore downward moves when the expected value is below this
+    tolerance:                          # ignore small deviations, like ignoreNearExpected in AMP
+      amount: 0
+      ratio: 0.05
+    model:
+      kind: seasonal
+      seasonality: [daily, weekly]
+      band_k: 6
+
+  - name: output_tokens
+    query: avg(output_tokens_mean)
+    direction: below
+    warmup_samples: 1440                # extra minimum number of samples before a score is exported
+    model:
+      kind: rcf
+      shingle_size: 8
+      num_trees: 40
+      sample_size: 1024
+
+  - name: queue_hard_limit
+    query: max(queue_depth)
+    model:
+      kind: static
+      upper: 100

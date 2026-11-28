@@ -19,6 +19,31 @@ dependencies = [
 [project.scripts]
 anomaly-detection = "anomaly_detection.cli:main"
 anomaly-detection-eval = "anomaly_detection.harness.cli:main"
+anomaly-detection-nab = "anomaly_detection.harness.nab_cli:main"
+anomaly-detection-replay = "anomaly_detection.harness.replay_cli:main"
+anomaly-detection-boom = "anomaly_detection.harness.boom_cli:main"
+anomaly-detection-ensemble = "anomaly_detection.harness.ensemble_cli:main"
+anomaly-detection-loadgen = "anomaly_detection.lab.loadgen:main"
+anomaly-detection-injector = "anomaly_detection.lab.injector:main"
+anomaly-detection-dump = "anomaly_detection.lab.dump:main"
+
+[project.optional-dependencies]
+# Forecast-band model on Toto 2.0 (Apache-2.0). Heavy (torch, gluonts); not part of the default
+# install. CPU is enough: use the CPU torch wheel index where the default wheel carries CUDA.
+toto = [
+    "toto-2>=2.0.0",
+    "torch>=2.4",
+]
+# IBM Granite TSPulse (Apache-2.0). granite-tsfm brings transformers, torch, pandas and
+# scikit-learn, so it stays out of the core dependencies. CPU-only torch is enough.
+tspulse = [
+    "granite-tsfm==0.3.12",
+]
+
+# Reads the Datadog BOOM arrow files (harness/boom_data.py). The tspulse extra brings it too.
+boom = [
+    "pyarrow>=15",
+]
 
 [dependency-groups]
 dev = [
@@ -40,6 +65,10 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# Korean report prose is written as long literal lines.
+"src/anomaly_detection/lab/subtle_report.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

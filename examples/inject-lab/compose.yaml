@@ -1,0 +1,36 @@
+# Store and detector of the injection lab. The engine, load generator, injector and GPU
+# exporter run as host processes (see run.sh), so the stack uses host networking.
+#
+#   docker compose -f compose.yaml up -d --build
+#
+# Ports on the host: 8428 store, 8080 detector. Change -httpListenAddr and the port in
+# config.yaml and scrape.yml together if they collide with something else.
+name: inject-lab
+
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.156.0
+    network_mode: host
+    command:
+      - -httpListenAddr=127.0.0.1:8428
+      - -retentionPeriod=30d
+      - -storageDataPath=/storage
+      - -promscrape.config=/etc/scrape.yml
+      # Default is 30s, which would delay what the detector sees by half a minute.
+      - -search.latencyOffset=5s
+    volumes:
+      - ./scrape.yml:/etc/scrape.yml:ro
+      - vmdata:/storage
+
+  detector:
+    # A tag of its own, so a build here never replaces an image other stacks use.
+    image: anomaly-detection:inject-lab
+    build:
+      context: ../..
+    network_mode: host
+    volumes:
+      - ./config.yaml:/etc/anomaly-detection/config.yaml:ro
+    depends_on: [victoriametrics]
+
+volumes:
+  vmdata:

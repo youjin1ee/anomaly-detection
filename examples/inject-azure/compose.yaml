@@ -1,0 +1,33 @@
+# Store and detector of the Azure trace lab. Same stack as ../inject-lab, with a project name
+# and volume of its own (nothing of the other lab is reused or removed) and both containers
+# pinned to the cores given in CPUSET. The detector image is the one ../inject-lab built; it is
+# only run here, with another config.
+#
+#   CPUSET=12-19 docker compose -f compose.yaml up -d
+name: inject-azure
+
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.156.0
+    network_mode: host
+    cpuset: ${CPUSET:-12-19}
+    command:
+      - -httpListenAddr=127.0.0.1:8428
+      - -retentionPeriod=30d
+      - -storageDataPath=/storage
+      - -promscrape.config=/etc/scrape.yml
+      - -search.latencyOffset=5s
+    volumes:
+      - ./scrape.yml:/etc/scrape.yml:ro
+      - vmdata:/storage
+
+  detector:
+    image: anomaly-detection:inject-lab
+    network_mode: host
+    cpuset: ${CPUSET:-12-19}
+    volumes:
+      - ./config.yaml:/etc/anomaly-detection/config.yaml:ro
+    depends_on: [victoriametrics]
+
+volumes:
+  vmdata:

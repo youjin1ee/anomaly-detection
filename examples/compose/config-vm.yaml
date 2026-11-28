@@ -1,0 +1,35 @@
+datasource:
+  url: http://victoriametrics:8428
+  # For a VictoriaMetrics cluster use the tenant path of vmselect instead:
+  # url: http://vmselect:8481
+  # path_prefix: /select/0/prometheus
+
+defaults:
+  interval: 60s
+  backfill: 14d
+
+detectors:
+  # Requests collapse to near zero or partially: the signal is a drop, so direction below.
+  # min_expected keeps a quiet night from alerting; a fall from a daytime level is still scored.
+  - name: request_rate_drop
+    query: sum(demo_request_rate)
+    direction: below
+    min_expected: 5
+    model: seasonal
+
+  # Every response ends after a couple of tokens, HTTP stays 200.
+  - name: output_tokens_drop
+    query: avg(demo_output_tokens_mean)
+    direction: below
+    model: seasonal
+
+  - name: training_throughput_drop
+    query: sum(demo_training_throughput)
+    direction: below
+    model: seasonal
+
+  - name: step_time_rise
+    query: max(demo_step_time_seconds)
+    direction: above
+    model: seasonal
+

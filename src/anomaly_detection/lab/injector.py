@@ -258,7 +258,22 @@ def write_labels(
                 ]
             )
         for n in natural or []:
-            w.writerow([n["kind"], n["start"], n["end"], "candidate", "", "", "", "", "", "", "", "natural"])
+            w.writerow(
+                [
+                    n["kind"],
+                    n["start"],
+                    n["end"],
+                    "candidate",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "natural",
+                ]
+            )
 
 
 def run(
@@ -334,9 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         help="with --trace: cut the injection days into runs of this many days, each with its"
         " own schedule seed (seed + run number); 0 = one run",
     )
-    p.add_argument(
-        "--subtle", action="store_true", help="add the subtle variant of every scenario"
-    )
+    p.add_argument("--subtle", action="store_true", help="add the subtle variant of every scenario")
     p.add_argument("--dry-run", action="store_true", help="print the schedule and exit")
     args = p.parse_args(argv)
 

@@ -303,7 +303,11 @@ def render_effects(recs) -> str:
     return "\n".join(out) + "\n"
 
 
-TARGETS = {"request_drop": "0.5~0.7", "output_length_drop": "0.5~0.7", "throughput_drop": "0.7~0.85"}
+TARGETS = {
+    "request_drop": "0.5~0.7",
+    "output_length_drop": "0.5~0.7",
+    "throughput_drop": "0.7~0.85",
+}
 
 
 def _target(sev: str, sc: str) -> str:
@@ -334,7 +338,9 @@ def render_drift(recs, models) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m anomaly_detection.lab.subtle_report", description=__doc__)
+    p = argparse.ArgumentParser(
+        prog="python -m anomaly_detection.lab.subtle_report", description=__doc__
+    )
     p.add_argument("--runs", nargs="+", type=Path, required=True, help="run directories")
     p.add_argument("--old", type=Path, help="run directory of the earlier lab, gross events only")
     p.add_argument("--models", default="fixed,seasonal,awsrcf,awsrcf-nab,subpca,rcf,tspulse")
@@ -367,7 +373,9 @@ def main(argv: list[str] | None = None) -> int:
         r, f = score_run("old", a.old, old_models, paths, rule, a.workers, cache=a.old / "scores")
         pooled = [x for x in recs if x.severity == "gross"] + r
         parts.append("\n## 지난 실행(24건, 워밍업에 주말 포함)을 합친 큰 장애\n")
-        parts.append(render_by_size(pooled, old_models).replace("### 크기별 전체", "### 큰 장애 합산"))
+        parts.append(
+            render_by_size(pooled, old_models).replace("### 크기별 전체", "### 큰 장애 합산")
+        )
         parts.append(render_breakdown([x for x in pooled], old_models, by_band=True))
     text = "\n".join(parts)
     print(text)

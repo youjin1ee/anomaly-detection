@@ -1,9 +1,8 @@
 import itertools
 import json
 
-import pytest
-
 import numpy as np
+import pytest
 
 from anomaly_detection.lab import injector
 from anomaly_detection.lab.injector import (
@@ -60,7 +59,7 @@ def test_subtle_variants_are_balanced_and_sized_from_their_ranges():
         assert sum(e.scenario == name and e.severity == sev and e.band == band for e in ev) == 3
     specs = {
         "a:subtle": {"factor": [0.5, 0.7], "target": [0.5, 0.7]},
-        "b:subtle": {"duty_by_band": {"peak": [0.1, 0.2], "trough": [0.4, 0.6]}, "target": [0.7, 0.85]},
+        "b:subtle": {"duty_by_band": {"peak": [0.1, 0.2], "trough": [0.4, 0.6]}, "target": [0.7, 0.85]},  # noqa: E501
     }  # fmt: skip
     draw_params(ev, specs, None, seed=4)
     for e in ev:
@@ -128,6 +127,8 @@ def test_slice_run_cuts_blocks_into_continuous_runs_and_measures_effects(tmp_pat
     assert r1["events"][0]["effect"] == 1.0 and r1["events"][0]["in_target"] is False
     assert r2["events"][0]["actual_start"] == 1700 and r2["events"][0]["start"] == 1700
     assert r2["events"][0]["effect"] == 0.5 and r2["events"][0]["in_target"] is True
-    ts = [float(x.split(",")[0]) for x in (out / "run2" / "signals.csv").read_text().splitlines()[1:]]
+    ts = [
+        float(x.split(",")[0]) for x in (out / "run2" / "signals.csv").read_text().splitlines()[1:]
+    ]
     assert ts == sorted(ts) and ts[0] == 1000 and ts[-1] == 2195  # warm-up, then block 2 moved
     assert set(ts) == set(range(1000, 2200, 5))

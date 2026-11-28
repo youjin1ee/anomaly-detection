@@ -22,7 +22,7 @@ def test_paired_bootstrap_interval_brackets_the_difference():
 
 
 def test_report_tables_from_one_run_with_a_subtle_and_a_gross_label(tmp_path, capsys):
-    sig, labels = _lab_signals(tmp_path, drop=True)
+    _, labels = _lab_signals(tmp_path, drop=True)
     doc = json.loads(labels.read_text())
     doc["meta"]["bands"] = {"peak": [0.7, 0.9]}
     e = doc["events"][0]
@@ -34,7 +34,14 @@ def test_report_tables_from_one_run_with_a_subtle_and_a_gross_label(tmp_path, ca
     assert sr.main(argv) == 0
     text = out.read_text()
     assert "| subtle | seasonal | 1 | 1/1 = 1.00" in text
-    for head in ("크기별 전체", "오탐", "크기, 시나리오, 시간대별", "고정 임계 대비", "실제 효과", "일차별"):
+    for head in (
+        "크기별 전체",
+        "오탐",
+        "크기, 시나리오, 시간대별",
+        "고정 임계 대비",
+        "실제 효과",
+        "일차별",
+    ):
         assert head in text
     idx = json.loads((tmp_path / "scores" / "index.json").read_text())
     assert idx["time_stretch"] == 60.0 and "request_rate" in idx["signals"]

@@ -64,12 +64,16 @@ def annotate(events: list[Event], signals: dict, settle: float = 60.0, before: f
         e.effect = float(np.median(inside) / np.median(ahead)) if ok else None
         e.level_before = float(np.median(ahead)) if len(ahead) else None
         e.in_target = (
-            None if not e.target or e.effect is None else bool(e.target[0] <= e.effect <= e.target[1])
+            None
+            if not e.target or e.effect is None
+            else bool(e.target[0] <= e.effect <= e.target[1])
         )
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m anomaly_detection.lab.slice_run", description=__doc__)
+    p = argparse.ArgumentParser(
+        prog="python -m anomaly_detection.lab.slice_run", description=__doc__
+    )
     p.add_argument("--dump-dir", type=Path, required=True, help="signals.csv and labels.json")
     p.add_argument("--out-root", type=Path, required=True)
     p.add_argument("--step", type=int, default=5)

@@ -66,6 +66,10 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# Korean report prose is written as long literal lines.
+"src/anomaly_detection/lab/subtle_report.py" = ["E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q -W ignore::UserWarning:rrcf -W ignore::DeprecationWarning:pkg_resources"

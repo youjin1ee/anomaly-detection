@@ -79,7 +79,7 @@ class Bridge:
         opts = os.environ.get("ANOMALY_AWSRCF_JAVA_OPTS", "-Xmx1g")
         cmd += opts.split()
         cmd += ["-cp", _classpath(), "AwsRcfBridge"]
-        self._err = tempfile.TemporaryFile("w+")  # JVM stderr, shown only if the start fails
+        self._err = tempfile.TemporaryFile("w+")  # noqa: SIM115 - JVM stderr, shown only if the start fails
         self._proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,

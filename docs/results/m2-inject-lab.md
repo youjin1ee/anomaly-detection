@@ -1,11 +1,11 @@
 # 2차 마일스톤 장애 주입 실험 결과
 
 - 실행일: 2026-11-26
-- 대상 커밋: `feat/m2-gb10-inject` 브랜치
+- 대상 커밋: `feat/m2-inject-lab` 브랜치
 - 환경: ARM64 GPU 장비 1대, 실제 LLM 서빙 엔진 + 압축 일 주기 부하 + 예약 장애 주입 + 정답 라벨
 - 방법과 도구: `examples/inject-lab/README.md`, 평가 정의는 `docs/evaluation.md`
 - 합성 데이터 결과: `docs/results/m1-baseline.md`
-- 수치는 `python -m anomaly_detection.lab.replay` 출력 그대로. 데이터 파일은 레포에 두지 않고 장비의 `~/work/anomaly-data/gb10-inject-20261126/`에 보관
+- 수치는 `python -m anomaly_detection.lab.replay` 출력 그대로. 데이터 파일은 레포에 두지 않고 장비의 `~/work/anomaly-data/inject-lab-20261126/`에 보관
 
 ## 요약
 

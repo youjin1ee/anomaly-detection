@@ -23,7 +23,7 @@ $CLI run --out "$OUT/boom.json" --boom-root "$A/public/boom" --boom-cache "$R/m4
 LABS=(--lab-dir "azure=$A/inject-azure-20261127/run-code")
 [ -n "${LAB:-}" ] && LABS+=(--lab-dir "$LAB")
 $CLI run --out "$OUT/lab.json" "${LABS[@]}"
-Q=$A/fabrix-qa-20261126
+Q=$A/qa-cluster-20261126
 $CLI qa-score --qa-dumps "$Q" --qa-cache "$Q/reports/cache" --workers "${WORKERS:-6}"
 $CLI run --out "$Q/reports/m5-ensemble-qa.json" --qa-dumps "$Q" --qa-cache "$Q/reports/cache"
 $CLI report "$OUT"/nab.json "$OUT"/benchmarks.json "$OUT"/boom.json "$OUT"/lab.json \

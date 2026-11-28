@@ -33,6 +33,7 @@ import math
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 from collections import deque
 from pathlib import Path
@@ -46,7 +47,13 @@ class AwsRcfUnavailable(RuntimeError):
 
 
 def _find_java() -> str:
-    java = os.environ.get("ANOMALY_AWSRCF_JAVA") or shutil.which("java")
+    """ANOMALY_AWSRCF_JAVA, else a JDK unpacked inside ANOMALY_AWSRCF_HOME (the bridge needs
+    Java 17 or newer, and the java on PATH is often older), else java on PATH."""
+    java = os.environ.get("ANOMALY_AWSRCF_JAVA")
+    if not java:
+        home = os.environ.get("ANOMALY_AWSRCF_HOME")
+        bundled = sorted(Path(home).glob("jdk*/bin/java")) if home else []
+        java = str(bundled[-1]) if bundled else shutil.which("java")
     if not java:
         raise AwsRcfUnavailable("no java found: set ANOMALY_AWSRCF_JAVA or put java on PATH")
     return java
@@ -72,11 +79,12 @@ class Bridge:
         opts = os.environ.get("ANOMALY_AWSRCF_JAVA_OPTS", "-Xmx1g")
         cmd += opts.split()
         cmd += ["-cp", _classpath(), "AwsRcfBridge"]
+        self._err = tempfile.TemporaryFile("w+")  # JVM stderr, shown only if the start fails
         self._proc = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=self._err,
             text=True,
             bufsize=1,
         )
@@ -84,7 +92,10 @@ class Bridge:
         self._next = 0
         first = self._proc.stdout.readline().strip()  # type: ignore[union-attr]
         if first != "READY":
-            raise AwsRcfUnavailable(f"the Java bridge did not start (got {first!r})")
+            self._proc.wait()
+            self._err.seek(0)
+            tail = self._err.read().strip()[-300:]
+            raise AwsRcfUnavailable(f"the Java bridge did not start ({cmd[0]}): {tail}")
         atexit.register(self.close)
 
     def new_id(self) -> str:

@@ -15,7 +15,8 @@ counts, as a token id prompt to /v1/completions with ignore_eos, so lengths are 
 Faults (all keep HTTP 200 where the endpoint does):
   request_drop     arrival rate is multiplied by `factor` (default 0.03); a trace arrival is
                    kept with probability `factor`
-  output_drop      the output token cap becomes 1 to 3 tokens
+  output_drop      the output token cap becomes 1 to 3 tokens; with `cap` a trace request keeps
+                   min(its generated tokens, cap), a milder cut
   latency_rise     `delay` seconds are added before every received chunk and before the first
                    byte: a slow path between client and server
 """
@@ -123,7 +124,10 @@ def one_request(
         fault = dict(state.fault) if state.fault else {}
         state.inflight += 1
     if shape is not None:
-        max_tokens = rng.randint(1, 3) if fault.get("kind") == "output_drop" else shape[1]
+        max_tokens = shape[1]
+        if fault.get("kind") == "output_drop":
+            # `cap` (a partial cut) lowers only the longer answers, no cap means 1 to 3 tokens
+            max_tokens = min(shape[1], int(fault["cap"])) if "cap" in fault else rng.randint(1, 3)
         path = "/v1/completions"
         payload = {
             "prompt": [rng.randrange(1000, 150000) for _ in range(shape[0])],

@@ -98,3 +98,14 @@ def test_grade_score_is_zero_on_normal_data_and_positive_on_a_spike():
     scored = [(t, o.score) for t, v, o in outs if o is not None]
     assert all(0.0 <= s <= 1.0 for _, s in scored)
     assert max(s for t, s in scored if t >= 1000 * 300.0) > 0.0
+
+
+def test_java_comes_from_env_then_bundled_jdk_then_path(tmp_path, monkeypatch):
+    jdk = tmp_path / "jdk-21.0.1" / "bin"
+    jdk.mkdir(parents=True)
+    (jdk / "java").write_text("")
+    monkeypatch.setenv("ANOMALY_AWSRCF_HOME", str(tmp_path))
+    monkeypatch.delenv("ANOMALY_AWSRCF_JAVA", raising=False)
+    assert awsrcf_mod._find_java() == str(jdk / "java")
+    monkeypatch.setenv("ANOMALY_AWSRCF_JAVA", "/x/java")
+    assert awsrcf_mod._find_java() == "/x/java"

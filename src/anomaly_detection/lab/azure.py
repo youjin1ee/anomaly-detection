@@ -43,13 +43,19 @@ def prepare(
     ctx_cap: int,
     gen_cap: int,
     seed: int = 1,
+    days: list[int] | None = None,
 ) -> dict:
     """Write an npz with t (lab seconds from the start of trace day 0), ctx, gen, and the
-    hourly request counts of the whole source. Returns the meta that is also stored."""
+    hourly request counts of the whole source. Returns the meta that is also stored.
+
+    `days` picks and orders the source days: slot j of the output holds source day days[j]
+    (0 is the first day of the file). A day may appear more than once, each slot is thinned on
+    its own, so the repeats hold different requests. Used to keep the weekend out of a run."""
     with csv_path.open() as f:
         n_rows = sum(1 for _ in f) - 1
     rng = np.random.default_rng(seed)
     hours: Counter[str] = Counter()
+    slots = list(days) if days is not None else list(range(7))
     t_l: list[float] = []
     ctx_l: list[int] = []
     gen_l: list[int] = []
@@ -62,15 +68,25 @@ def prepare(
                 day0 = datetime.fromisoformat(chunk[0][:10]).replace(tzinfo=None)
             # keep probability is set from the target mean rate over the replayed week
             p = mean_rate * 7 * day_seconds / n_rows
-            keep = rng.random(len(chunk)) < p
-            for line, k in zip(chunk, keep, strict=True):
-                if not k:
-                    continue
-                ts, c, g = line.rstrip("\n").split(",")
-                dt = datetime.fromisoformat(ts)
-                t_l.append((dt.replace(tzinfo=None) - day0).total_seconds() * day_seconds / DAY)
-                ctx_l.append(int(c))
-                gen_l.append(int(g))
+            for slot, src_day in enumerate(slots):
+                keep = rng.random(len(chunk)) < p
+                for line, k in zip(chunk, keep, strict=True):
+                    if not k:
+                        continue
+                    ts, c, g = line.rstrip("\n").split(",")
+                    dt = datetime.fromisoformat(ts)
+                    sec = (dt.replace(tzinfo=None) - day0).total_seconds()
+                    if days is None:
+                        t_out = sec
+                    elif sec // DAY == src_day:
+                        t_out = sec - src_day * DAY + slot * DAY
+                    else:
+                        continue
+                    t_l.append(t_out * day_seconds / DAY)
+                    ctx_l.append(int(c))
+                    gen_l.append(int(g))
+                if days is None:
+                    break  # one pass keeps the old behaviour (and the old random stream)
     assert day0 is not None, "empty trace"
     order = np.argsort(t_l)
     t = np.asarray(t_l)[order]
@@ -82,6 +98,8 @@ def prepare(
     hourly = np.zeros(n_h)
     for k, n in hours.items():
         hourly[_hour_index(k, day0)] = n
+    if days is not None:
+        hourly = np.concatenate([hourly[d * 24 : (d + 1) * 24] for d in slots])
     meta = {
         "source": csv_path.name,
         "day0": day0.isoformat(),
@@ -96,6 +114,7 @@ def prepare(
         "ctx_clipped": float(np.mean(np.round(raw_ctx * ctx_scale) > ctx_cap)),
         "gen_clipped": float(np.mean(raw_gen > gen_cap)),
         "seed": seed,
+        "days": slots,
     }
     np.savez(out, t=t, ctx=ctx, gen=gen, hourly=hourly, raw_ctx=raw_ctx, raw_gen=raw_gen)
     return meta
@@ -145,6 +164,23 @@ def band_windows(
     return out
 
 
+def cap_for_ratio(gen: np.ndarray, ratio: float) -> int:
+    """Output token cap that leaves `ratio` of the mean generated length: the smallest cap c
+    with mean(min(gen, c)) >= ratio * mean(gen). A cap near the median cuts the mean to about
+    half because the length distribution has a long tail."""
+    g = np.sort(np.asarray(gen, dtype=float))
+    target = ratio * g.mean()
+    # mean(min(g, c)) is non decreasing in c, so a bisection over integer caps is enough
+    lo, hi = 1, int(g.max())
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if np.minimum(g, mid).mean() >= target:
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m anomaly_detection.lab.azure", description=__doc__)
     p.add_argument("--csv", type=Path, required=True)
@@ -155,9 +191,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ctx-cap", type=int, default=1900)
     p.add_argument("--gen-cap", type=int, default=256)
     p.add_argument("--seed", type=int, default=1)
+    p.add_argument(
+        "--days",
+        default="",
+        help="source days in output order, e.g. 3,4,5,6,3,4,5 (0 = first day of the file)",
+    )
     a = p.parse_args(argv)
+    days = [int(d) for d in a.days.split(",") if d] or None
     meta = prepare(
-        a.csv, a.out, a.day_seconds, a.mean_rate, a.ctx_scale, a.ctx_cap, a.gen_cap, a.seed
+        a.csv, a.out, a.day_seconds, a.mean_rate, a.ctx_scale, a.ctx_cap, a.gen_cap, a.seed, days
     )
     z = np.load(a.out)
     meta["low_spans"] = low_spans(z["hourly"])

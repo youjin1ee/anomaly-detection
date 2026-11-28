@@ -277,3 +277,38 @@ def test_effect_sizes_compare_the_event_with_the_time_before_it(tmp_path):
     (ratio,) = effects["request_drop"]
     assert ratio < 0.1
     assert "request_drop" in replay.render_effects(effects)
+
+
+def test_calibrate_faults_reads_counters_and_finds_the_decode_speed_ratio():
+    from anomaly_detection.lab import calibrate_faults as cf
+
+    text = (
+        'vllm:inter_token_latency_seconds_count{model="m"} 10\n'
+        'vllm:inter_token_latency_seconds_count{model="n"} 5\n'
+        "# a comment\nvllm:inter_token_latency_seconds_sum 3.0\n"
+    )
+    assert cf.read_counter(text, cf.COUNT) == 15 and cf.read_counter(text, cf.TOTAL) == 3.0
+    # 20 tokens per second until t=200, 10 per second after it
+    samples, c, s = [], 0.0, 0.0
+    for t in range(0, 400, 5):
+        rate = 20.0 if t < 200 else 10.0
+        c += rate * 5
+        s += 5
+        samples.append((float(t), c, s))
+    series = cf.decode_speed(samples)
+    assert series[0][0] >= cf.WINDOW and abs(series[0][1] - 20) < 1e-9
+    assert abs(cf.effect(series, 200.0, 380.0, before=90, settle=70) - 0.5) < 1e-9
+
+
+def test_steady_trace_holds_the_mean_rate_of_the_band(tmp_path):
+    from anomaly_detection.lab import calibrate_faults as cf
+
+    rng = np.random.default_rng(1)
+    day = 100.0  # a day of 100 s: busy in the second half, 10 requests per second there
+    t = np.sort(np.concatenate([rng.uniform(0, 50, 50), rng.uniform(50, 100, 1000)]))
+    npz = tmp_path / "t.npz"
+    np.savez(npz, t=t, ctx=np.full(len(t), 7), gen=np.full(len(t), 3))
+    tr = cf.steady_trace(npz, (0.5, 1.0), day, minutes=10, seed=2)
+    assert abs(float(tr["rate"]) - 20.0) < 0.5  # 1000 requests in 50 s
+    assert abs(len(tr["t"]) / 600 - 20.0) < 2 and (tr["ctx"] == 7).all()
+    assert tr["t"].max() < 600
